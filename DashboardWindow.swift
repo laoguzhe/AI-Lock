@@ -10,7 +10,23 @@ private let cardColor = NSColor.controlBackgroundColor
 private let lime = NSColor(calibratedRed: 0.71, green: 0.96, blue: 0.35, alpha: 1)
 private let panelColor = NSColor.clear
 
-final class DashboardWindow: NSWindowController, NSMenuDelegate {
+final class DashboardWindow: NSWindowController, NSMenuDelegate, UNUserNotificationCenterDelegate {
+    static var preferredColorScheme: ColorScheme? {
+        switch UserDefaults.standard.string(forKey: "appearance.mode") ?? "system" {
+        case "light": .light
+        case "dark": .dark
+        default: nil
+        }
+    }
+
+    static var preferredAppearance: NSAppearance? {
+        switch UserDefaults.standard.string(forKey: "appearance.mode") ?? "system" {
+        case "light": NSAppearance(named: .aqua)
+        case "dark": NSAppearance(named: .darkAqua)
+        default: nil
+        }
+    }
+
     enum Module: String {
         case files = "文件活动", processes = "进程管理", network = "网络活动", logs = "系统日志", clipboard = "剪贴板历史", settings = "监控预警", preferences = "设置", dockLock = "DockLock", dockLockSettings = "DockLock 设置", search = "快速文件搜索", cacheCleaner = "系统健康检查", uninstaller = "应用卸载", launchItems = "启动项检查", launcher = "快捷操作"
     }
@@ -48,6 +64,7 @@ final class DashboardWindow: NSWindowController, NSMenuDelegate {
         window.title = module?.rawValue ?? "AI Lock"
         window.minSize = module == .settings ? NSSize(width: 500, height: 400) : NSSize(width: 760, height: 500)
         window.backgroundColor = canvas
+        window.appearance = Self.preferredAppearance
         super.init(window: window)
         self.module = module
         if let module { buildModuleWindow(module) }
@@ -250,7 +267,9 @@ final class DashboardWindow: NSWindowController, NSMenuDelegate {
     private var hotKeyRef: EventHotKeyRef?
     private static var globalHotKeyRefs: [EventHotKeyRef] = []
     private static var lastCommandPress: TimeInterval = 0
-    private static var commandDoubleTapMonitor: Any?
+    private static var commandEventTap: CFMachPort?
+    private static var commandEventTapSource: CFRunLoopSource?
+    private static var commandKeyIsDown = false
     private static let globalHotkeyModules: [(UInt32, Module)] = [(1, .dockLockSettings), (2, .files), (3, .processes), (4, .network), (5, .logs), (6, .clipboard), (7, .settings), (8, .cacheCleaner), (9, .preferences), (10, .launcher)]
     static var hotkeyAssignments: [String: Int] {
         get {
@@ -261,8 +280,14 @@ final class DashboardWindow: NSWindowController, NSMenuDelegate {
     static func refreshGlobalHotkeys() { registerGlobalHotkeys() }
 
     private func initializeExtraServices() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let notificationCenter = UNUserNotificationCenter.current()
+        notificationCenter.delegate = self
         Self.registerGlobalHotkeys()
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
     }
 
     private static func registerGlobalHotkeys() {
@@ -300,7 +325,31 @@ final class DashboardWindow: NSWindowController, NSMenuDelegate {
             }
             return noErr
         }, 1, &eventType, nil, nil)
-        if commandDoubleTapMonitor == nil {
+        installCommandEventTap()
+    }
+
+    private static func installCommandEventTap() {
+        if commandEventTap == nil {
+            let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
+            let callback: CGEventTapCallBack = { _, type, event, _ in
+                guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
+                let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                let isDown = event.flags.contains(.maskCommand)
+                DispatchQueue.main.async { handleCommandDoubleTap(keyCode: keyCode, isDown: isDown) }
+                return Unmanaged.passUnretained(event)
+            }
+            commandEventTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap,
+                                                options: .listenOnly, eventsOfInterest: mask,
+                                                callback: callback, userInfo: nil)
+            if let commandEventTap {
+                commandEventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, commandEventTap, 0)
+                if let commandEventTapSource {
+                    CFRunLoopAddSource(CFRunLoopGetMain(), commandEventTapSource, .commonModes)
+                    CGEvent.tapEnable(tap: commandEventTap, enable: true)
+                }
+            }
+        }
+        if false {
             commandDoubleTapMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
                 guard UserDefaults.standard.integer(forKey: "hotkey.quickAction") == 0,
                       (event.keyCode == UInt16(kVK_Command) || event.keyCode == UInt16(kVK_RightCommand)),
@@ -311,6 +360,64 @@ final class DashboardWindow: NSWindowController, NSMenuDelegate {
                     DispatchQueue.main.async { DashboardWindow.openCommandPalette() }
                 } else { lastCommandPress = now }
             }
+        }
+    }
+
+    private static func handleCommandDoubleTap(keyCode: UInt16, isDown: Bool) {
+        guard keyCode == UInt16(kVK_Command) || keyCode == UInt16(kVK_RightCommand) else { return }
+        guard isDown else { commandKeyIsDown = false; return }
+        guard !commandKeyIsDown else { return }
+        commandKeyIsDown = true
+        guard UserDefaults.standard.integer(forKey: "quickActionHotkey") == 0 else { return }
+        let now = Date.timeIntervalSinceReferenceDate
+        if now - lastCommandPress <= 0.45 {
+            lastCommandPress = 0
+            DispatchQueue.main.async { DashboardWindow.openCommandPalette() }
+        } else {
+            lastCommandPress = now
+        }
+    }
+
+        if localCommandDoubleTapMonitor == nil {
+            localCommandDoubleTapMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                handleCommandDoubleTap(keyCode: event.keyCode, isDown: event.modifierFlags.contains(.command))
+                return event
+            }
+        }
+        if commandEventTap == nil {
+            let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
+            let callback: CGEventTapCallBack = { _, type, event, _ in
+                guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
+                let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                let isDown = event.flags.contains(.maskCommand)
+                DispatchQueue.main.async { handleCommandDoubleTap(keyCode: keyCode, isDown: isDown) }
+                return Unmanaged.passUnretained(event)
+            }
+            commandEventTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap,
+                                                options: .listenOnly, eventsOfInterest: mask,
+                                                callback: callback, userInfo: nil)
+            if let commandEventTap {
+                commandEventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, commandEventTap, 0)
+                if let commandEventTapSource {
+                    CFRunLoopAddSource(CFRunLoopGetMain(), commandEventTapSource, .commonModes)
+                    CGEvent.tapEnable(tap: commandEventTap, enable: true)
+                }
+            }
+        }
+    }
+
+    private static func handleCommandDoubleTap(keyCode: UInt16, isDown: Bool) {
+        guard keyCode == UInt16(kVK_Command) || keyCode == UInt16(kVK_RightCommand) else { return }
+        guard isDown else { commandKeyIsDown = false; return }
+        guard !commandKeyIsDown else { return }
+        commandKeyIsDown = true
+        guard UserDefaults.standard.integer(forKey: "quickActionHotkey") == 0 else { return }
+        let now = Date.timeIntervalSinceReferenceDate
+        if now - lastCommandPress <= 0.45 {
+            lastCommandPress = 0
+            DispatchQueue.main.async { DashboardWindow.openCommandPalette() }
+        } else {
+            lastCommandPress = now
         }
     }
 
@@ -1296,6 +1403,7 @@ struct DashboardOverviewView: View {
             HStack(spacing: 6) {
                 TextField(english ? "Search apps or files" : "搜索应用或文件", text: $query)
                     .textFieldStyle(.roundedBorder)
+                    .focusable(false)
                     .onChange(of: query) { _, value in
                         search.search(value) { results in
                             searchResults = results
@@ -1642,7 +1750,9 @@ struct DashboardOverviewView: View {
     }
 
     private var visibleModuleIDs: Set<String> {
-        visibleModulesRaw.isEmpty ? Set(modules.map { $0.2.rawValue }) : Set(visibleModulesRaw.split(separator: ",").map(String.init))
+        visibleModulesRaw.isEmpty
+            ? Set(modules.map { $0.2.rawValue })
+            : Set(visibleModulesRaw.split(separator: ",").map(String.init)).union([DashboardWindow.Module.preferences.rawValue, DashboardWindow.Module.dockLock.rawValue])
     }
 
     private var orderedModuleIDs: [String] {
@@ -1660,6 +1770,7 @@ struct DashboardOverviewView: View {
     }
 
     private func hideModule(_ module: DashboardWindow.Module) {
+        guard module != .preferences else { return }
         var ids = visibleModuleIDs
         ids.remove(module.rawValue)
         visibleModulesRaw = ids.joined(separator: ",")
@@ -1855,7 +1966,9 @@ private final class PreferencesWindowController: NSWindowController {
                               backing: .buffered, defer: false)
         window.title = "设置"
         window.minSize = NSSize(width: 680, height: 480)
-        window.contentViewController = NSHostingController(rootView: PreferencesWindowView())
+        window.appearance = DashboardWindow.preferredAppearance
+        window.contentViewController = NSHostingController(rootView: PreferencesWindowView()
+            .preferredColorScheme(DashboardWindow.preferredColorScheme))
         super.init(window: window)
         window.center()
     }
@@ -1868,6 +1981,7 @@ private struct PreferencesWindowView: View {
     @State private var selection = "通用"
     @AppStorage("overview.language") private var selectedEnglish = false
     @AppStorage("overview.followSystemLanguage") private var followSystemLanguage = true
+    @AppStorage("appearance.mode") private var appearanceMode = "system"
     private var english: Bool { followSystemLanguage ? Locale.preferredLanguages.first?.hasPrefix("en") ?? false : selectedEnglish }
     private var languageSelection: Binding<String> {
         Binding(get: { followSystemLanguage ? "system" : (selectedEnglish ? "en" : "zh") }, set: { value in
@@ -1904,13 +2018,22 @@ private struct PreferencesWindowView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(english ? englishTitle(selection) : selection).font(.system(size: 22, weight: .semibold))
                     sectionContent
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(28)
             }
         }
         .onChange(of: statusMetricsRaw) { _, _ in NotificationCenter.default.post(name: .statusMetricsChanged, object: nil) }
         .onChange(of: english) { _, _ in NotificationCenter.default.post(name: .statusMetricsChanged, object: nil) }
+        .onAppear { applyAppearance() }
+        .onChange(of: appearanceMode) { _, _ in
+            applyAppearance()
+            NotificationCenter.default.post(name: .appearanceModeChanged, object: nil)
+        }
+        .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
+    }
+
+    private func applyAppearance() {
+        NSApp.appearance = DashboardWindow.preferredAppearance
     }
 
     @ViewBuilder private var sectionContent: some View {
@@ -1921,7 +2044,14 @@ private struct PreferencesWindowView: View {
                 Text("English").tag("en")
                 Text(english ? "Follow System" : "跟随系统").tag("system")
             }
-            Picker(english ? "Text Size" : "文字大小", selection: $fontSize) { Text("小").tag(0.9); Text("中").tag(1.0); Text("大").tag(1.15) }
+            HStack(spacing: 16) {
+                Picker(english ? "Appearance" : "样式", selection: $appearanceMode) {
+                    Text(english ? "Light" : "浅色").tag("light")
+                    Text(english ? "Dark" : "深色").tag("dark")
+                    Text(english ? "Follow System" : "跟随系统").tag("system")
+                }
+                Picker(english ? "Text Size" : "文字大小", selection: $fontSize) { Text("小").tag(0.9); Text("中").tag(1.0); Text("大").tag(1.15) }
+            }
             GroupBox(english ? "Menu Bar Metrics" : "状态栏指标") {
                 HStack(spacing: 22) {
                     metricChoice("cpu", title: "CPU", symbol: "cpu")
@@ -1938,10 +2068,11 @@ private struct PreferencesWindowView: View {
             HStack { Button("保存预警阈值") { [("alert.cpu", cpu), ("alert.diskGB", disk), ("alert.networkMB", network)].forEach { UserDefaults.standard.set($0.1, forKey: $0.0) } }; Button("发送测试通知") { sendTestNotification() } }
             if !notificationStatus.isEmpty { Text(notificationStatus).font(.caption).foregroundStyle(.secondary) }
         case "DockLock":
-            Toggle("启用 DockLock", isOn: Binding(get: { enabled }, set: { value in if value != enabled { enabled = DashboardWindow.toggleDockLock() } }))
+            Text("锁定程序坞在你选择的显示器上。")
+                .foregroundStyle(.secondary)
             Toggle("Dock 偏离时自动拉回", isOn: $autoSnap).onChange(of: autoSnap) { _, value in UserDefaults.standard.set(value, forKey: "autoSnap") }
+            HStack { Text("屏幕边缘拦截厚度 (pt)"); Spacer(); TextField("6", value: $edgeMargin, format: .number).frame(width: 80) }.onChange(of: edgeMargin) { _, value in UserDefaults.standard.set(value, [密钥]) }
             Picker("目标显示器", selection: $target) { Text("自动（主屏优先）").tag("builtin"); ForEach(DashboardWindow.dockLockScreens, id: \.id) { Text("\($0.name) · \($0.size)").tag(String($0.id)) } }.onChange(of: target) { _, value in DashboardWindow.setDockLockTarget(value) }
-            Text("显示器排列 · 点击桌面预览关闭/恢复显示").font(.headline)
             ScreenTopologyView(screens: DashboardWindow.dockLockScreens)
             HStack { Text("屏幕边缘拦截厚度 (pt)"); Spacer(); TextField("6", value: $edgeMargin, format: .number).frame(width: 80) }.onChange(of: edgeMargin) { _, value in UserDefaults.standard.set(value, forKey: "edgeMargin") }
         case "首页图标":
@@ -2007,10 +2138,13 @@ private struct PreferencesWindowView: View {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             DispatchQueue.main.async {
-                guard granted, error == nil else { notificationStatus = "通知未授权：请在系统设置中允许 AI Lock 发送通知。"; return }
+                if let error { notificationStatus = "请求通知权限失败：\(error.localizedDescription)"; return }
+                guard granted else { notificationStatus = "通知未授权：请在系统设置中允许 AI Lock 发送通知。"; return }
                 let content = UNMutableNotificationContent(); content.title = "AI Lock 测试通知"; content.body = "通知权限已配置，可收到资源预警。"; content.sound = .default
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))) { error in
-                    DispatchQueue.main.async { notificationStatus = error.map { "发送失败：\($0.localizedDescription)" } ?? "测试通知已发送，请检查通知中心。" }
+                    DispatchQueue.main.async {
+                        notificationStatus = error.map { "发送失败：\($0.localizedDescription)" } ?? "测试通知已发送；若未弹出，请检查系统通知设置。"
+                    }
                 }
             }
         }
@@ -2018,6 +2152,10 @@ private struct PreferencesWindowView: View {
 
     private func symbol(for section: String) -> String { ["通用": "slider.horizontal.3", "监控预警": "bell.badge", "DockLock": "dock.rectangle", "首页图标": "square.grid.2x2", "功能快捷键": "keyboard", "帮助/关于": "info.circle"] [section] ?? "gearshape" }
     private func englishTitle(_ section: String) -> String { ["通用": "General", "监控预警": "Resource Alerts", "DockLock": "DockLock", "首页图标": "Home Icons", "功能快捷键": "Shortcuts", "帮助/关于": "Help / About"][section] ?? section }
+}
+
+extension Notification.Name {
+    static let appearanceModeChanged = Notification.Name("appearanceModeChanged")
 }
 
 private extension DashboardWindow.Module {
@@ -2029,12 +2167,18 @@ private struct ScreenTopologyView: View {
     @State private var covered = DashboardWindow.coveredDisplays
     var body: some View {
         GeometryReader { proxy in
+            let availableWidth = max(proxy.size.width - 32, 1)
+            let availableHeight = max(proxy.size.height - 32, 1)
             let minX = screens.map(\.bounds.minX).min() ?? 0
             let minY = screens.map(\.bounds.minY).min() ?? 0
             let maxX = screens.map(\.bounds.maxX).max() ?? 1
             let maxY = screens.map(\.bounds.maxY).max() ?? 1
-            let scale = min(proxy.size.width / max(maxX - minX, 1), 190 / max(maxY - minY, 1))
-            ZStack(alignment: .topLeading) {
+            let scale = min(availableWidth / max(maxX - minX, 1), availableHeight / max(maxY - minY, 1))
+            let diagramWidth = (maxX - minX) * scale
+            let diagramHeight = (maxY - minY) * scale
+            let originX = (proxy.size.width - diagramWidth) / 2
+            let originY = (proxy.size.height - diagramHeight) / 2
+            ZStack {
                 ForEach(screens, id: \.id) { screen in
                     Button {
                         DashboardWindow.toggleDisplayPrivacy(screen.id)
@@ -2042,18 +2186,17 @@ private struct ScreenTopologyView: View {
                     } label: {
                         ZStack {
                             Image(nsImage: wallpaper(for: screen.id) ?? NSImage(systemSymbolName: "display", accessibilityDescription: nil)!)
-                                .resizable().scaledToFill()
+                                .resizable().scaledToFit()
                             if covered.contains(screen.id) { Color.black.opacity(0.85) }
                         }
-                        .frame(width: max(48, screen.bounds.width * scale - 12), height: max(40, screen.bounds.height * scale - 20)).clipped()
-                        .padding(5)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.secondary.opacity(0.5)))
+                        .frame(width: max(1, screen.bounds.width * scale - 4), height: max(1, screen.bounds.height * scale - 4))
                     }.buttonStyle(.plain)
-                    .position(x: ((screen.bounds.midX - minX) * scale) + max(48, screen.bounds.width * scale) / 2,
-                              y: ((screen.bounds.midY - minY) * scale) + max(48, screen.bounds.height * scale) / 2)
+                    .position(x: originX + (screen.bounds.midX - minX) * scale,
+                              y: originY + (screen.bounds.midY - minY) * scale)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
         }.frame(height: 220)
     }
 
@@ -2139,6 +2282,10 @@ private final class DisplayPrivacyManager {
 
     private func show(_ displayID: CGDirectDisplayID, on screen: NSScreen) {
         let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
+        window.setFrame(screen.frame, display: false)
+        window.contentView = NSView(frame: NSRect(origin: .zero, size: window.frame.size))
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.black.cgColor
         window.backgroundColor = .black
         window.isOpaque = true
         window.hasShadow = false

@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         DashboardWindow.setDockLockController(lock)
         setupStatusItem()
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshAppearance), name: .appearanceModeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(refreshStatusMetrics), name: .statusMetricsChanged, object: nil)
         recordNetworkHistory()
         historyTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -31,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.showOverview()
         }
+    }
+
+    @objc private func refreshAppearance() {
+        guard let window = overviewPopover.contentViewController?.view.window else { return }
+        window.appearance = DashboardWindow.preferredAppearance
     }
 
     private func recordNetworkHistory() {
@@ -118,10 +124,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             overviewPopover.behavior = .transient
             overviewPopover.animates = true
             overviewPopover.contentSize = NSSize(width: 390, height: 510)
-            overviewPopover.contentViewController = NSHostingController(rootView: DashboardOverviewView())
+            let overview = DashboardOverviewView()
+                .preferredColorScheme(DashboardWindow.preferredColorScheme)
+        let hostingController = NSHostingController(rootView: overview)
+        hostingController.view.appearance = DashboardWindow.preferredAppearance
+        overviewPopover.contentViewController = hostingController
             overviewPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             DispatchQueue.main.async { [weak self] in
                 guard let popoverWindow = self?.overviewPopover.contentViewController?.view.window else { return }
+                popoverWindow.appearance = DashboardWindow.preferredAppearance
                 popoverWindow.level = .statusBar
                 popoverWindow.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle])
                 popoverWindow.orderFrontRegardless()
