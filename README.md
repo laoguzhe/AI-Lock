@@ -8,7 +8,7 @@ AI Lock 是一款 macOS 本机活动与资源监控工具，目标是让用户�
 
 **AI Lock 正在开发中，当前请从源码构建。**
 
-需要 macOS 13 (Ventura) 或更高版本，Apple Silicon 与 Intel 通用。
+需要 macOS 14 (Sonoma) 或更高版本，Apple Silicon 与 Intel 通用。
 
 当前开发构建为临时签名，不代表已完成正式发布公证。
 

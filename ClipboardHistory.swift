@@ -63,6 +63,17 @@ final class ClipboardHistory: NSObject {
         lastChangeCount = pasteboard.changeCount
     }
 
+    func copyBack(_ records: [ClipboardRecord]) {
+        guard !records.isEmpty else { return }
+        pasteboard.clearContents()
+        pasteboard.writeObjects(records.map { record in
+            let item = NSPasteboardItem()
+            for (type, data) in record.values { item.setData(data, forType: NSPasteboard.PasteboardType(type)) }
+            return item
+        })
+        lastChangeCount = pasteboard.changeCount
+    }
+
     func clear() {
         records.removeAll()
         save()

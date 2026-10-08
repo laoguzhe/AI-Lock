@@ -1,30 +1,77 @@
 import AppKit
+import SwiftUI
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let lock = DockLock()
     private var item: NSStatusItem!
-    private var toggleItem: NSMenuItem?
+    private var settingsMenu: NSMenu!
+    private var dockLockItem: NSMenuItem?
     private var screenMenu: NSMenu!
     private var screenItem: NSMenuItem?
     private var loginItem: NSMenuItem?
     private var waitTimer: Timer?
-    private var dashboard: DashboardWindow?
+    private let overviewPopover = NSPopover()
+    private let overviewMonitor = SystemMonitor()
+    private var historyTimer: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        DashboardWindow.setDockLockController(lock)
         setupStatusItem()
-        showDashboard(nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshStatusMetrics), name: .statusMetricsChanged, object: nil)
+        recordNetworkHistory()
+        historyTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.recordNetworkHistory()
+        }
         if !attemptStart() {
             waitTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
                 if self?.attemptStart() == true { timer.invalidate() }
             }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showOverview()
+        }
     }
 
-    @objc private func showDashboard(_ sender: Any?) {
-        if dashboard == nil { dashboard = DashboardWindow() }
-        dashboard?.showWindow(sender)
-        NSApp.activate(ignoringOtherApps: true)
+    private func recordNetworkHistory() {
+        let sample = overviewMonitor.sample()
+        NetworkHistory.shared.record(at: sample.timestamp, downloadBytesPerSecond: sample.networkDownload, uploadBytesPerSecond: sample.networkUpload)
+        let selected = (UserDefaults.standard.string(forKey: "overview.statusMetrics") ?? "")
+            .split(separator: ",")
+            .map(String.init)
+        var items: [NSAttributedString] = []
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.labelColor]
+        if selected.contains("cpu") {
+            items.append(metricAttachment("cpu", description: "CPU"))
+            items.append(NSAttributedString(string: String(format: "%.0f%%", sample.cpuUsage * 100), attributes: attributes))
+        }
+        if selected.contains("memory") {
+            let value = sample.memoryTotal > 0 ? Double(sample.memoryUsed) / Double(sample.memoryTotal) * 100 : 0
+            items.append(metricAttachment("memorychip", description: "Memory"))
+            items.append(NSAttributedString(string: String(format: "%.0f%%", value), attributes: attributes))
+        }
+        if selected.contains("disk") {
+            let value = sample.diskTotal > 0 ? Double(sample.diskUsed) / Double(sample.diskTotal) * 100 : 0
+            items.append(metricAttachment("internaldrive", description: "Disk"))
+            items.append(NSAttributedString(string: String(format: "%.0f%%", value), attributes: attributes))
+        }
+        let title = NSMutableAttributedString(string: " ")
+        items.forEach { title.append($0); title.append(NSAttributedString(string: " ")) }
+        item.button?.attributedTitle = title
+        item.length = NSStatusItem.variableLength
+        item.button?.invalidateIntrinsicContentSize()
+        item.button?.needsLayout = true
+    }
+
+    @objc private func refreshStatusMetrics() { recordNetworkHistory() }
+
+    private func metricAttachment(_ symbol: String, description: String) -> NSAttributedString {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)!
+        image.size = NSSize(width: 12, height: 12)
+        image.isTemplate = true
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        return NSAttributedString(attachment: attachment)
     }
 
     @discardableResult
@@ -32,47 +79,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let trusted = AXIsProcessTrusted()
         guard trusted, lock.start() else {
             log("未就绪：AXIsProcessTrusted=\(trusted) 路径=\(Bundle.main.bundlePath)")
-            item?.button?.appearsDisabled = true
+            item?.button?.appearsDisabled = false
             item?.button?.toolTip = "AI Lock：Dock 锁定等待辅助功能授权"
-            toggleItem?.title = "Dock 锁定未授权 · 打开系统设置"
+            dockLockItem?.state = .off
             return false
         }
         item?.button?.appearsDisabled = false
         item?.button?.toolTip = "AI Lock：本机监控运行中"
-        toggleItem?.title = "启用 Dock 锁定"
-        toggleItem?.state = .on
+        dockLockItem?.state = .on
         return true
     }
 
     private func setupStatusItem() {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "shield.lefthalf.filled", accessibilityDescription: "AI Lock")
-            ?? NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "AI Lock")
+        let statusIconURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/StatusIcon.png")
+        let statusIcon = NSImage(contentsOf: statusIconURL)
+        let symbol = NSImage(systemSymbolName: "shield.lefthalf.filled", accessibilityDescription: "AI Lock")
+            ?? NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "AI Lock")!
+        let image = statusIcon ?? symbol
+        image.size = NSSize(width: 22, height: 22)
+        image.isTemplate = statusIcon == nil
+        item.button?.image = image
+        item.button?.imageScaling = .scaleProportionallyUpOrDown
+        log("状态栏图标：\(statusIcon == nil ? "系统回退" : statusIconURL.path)，图像尺寸 \(image.size)")
 
-        let menu = NSMenu()
-        menu.addItem(withTitle: "打开 AI Lock", action: #selector(showDashboard(_:)), keyEquivalent: "o").target = self
-        menu.addItem(.separator())
-        let toggle = NSMenuItem(title: "启用 Dock 锁定", action: #selector(toggle(_:)), keyEquivalent: "")
-        toggle.target = self; toggle.state = .on; menu.addItem(toggle); toggleItem = toggle
-
-        let screenEntry = NSMenuItem(title: "Dock 固定在…", action: nil, keyEquivalent: "")
-        screenMenu = NSMenu(); screenMenu.delegate = self
-        screenEntry.submenu = screenMenu; menu.addItem(screenEntry); screenItem = screenEntry
-
-        let login = NSMenuItem(title: "开机自启", action: #selector(toggleLogin(_:)), keyEquivalent: "")
-        login.target = self; login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(login); loginItem = login
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 AI Lock", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        item.menu = menu
+        item.menu = nil
+        item.button?.target = self
+        item.button?.action = #selector(showOverview(_:))
+        item.button?.toolTip = "AI Lock 总览"
     }
 
-    @objc private func toggle(_ sender: NSMenuItem) {
-        guard AXIsProcessTrusted() else {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-            return
+    @objc private func showOverview(_ sender: Any? = nil) {
+        guard let button = item.button else { return }
+        if overviewPopover.isShown {
+            if sender != nil { overviewPopover.performClose(sender) }
+        } else {
+            overviewPopover.behavior = .transient
+            overviewPopover.animates = true
+            overviewPopover.contentSize = NSSize(width: 390, height: 510)
+            overviewPopover.contentViewController = NSHostingController(rootView: DashboardOverviewView())
+            overviewPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            DispatchQueue.main.async { [weak self] in
+                guard let popoverWindow = self?.overviewPopover.contentViewController?.view.window else { return }
+                popoverWindow.level = .statusBar
+                popoverWindow.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle])
+                popoverWindow.orderFrontRegardless()
+            }
         }
-        lock.enabled.toggle(); sender.state = lock.enabled ? .on : .off
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
@@ -86,6 +140,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === settingsMenu {
+            dockLockItem?.state = lock.enabled ? .on : .off
+            return
+        }
         guard menu === screenMenu else {
             if AXIsProcessTrusted() { screenItem?.title = "Dock 固定在：\(lock.targetName)" }
             loginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off

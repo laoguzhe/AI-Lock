@@ -2,8 +2,19 @@ import AppKit
 import UserNotifications
 
 final class ResourceAlerts {
+    enum Threshold {
+        case cpu, diskGB
+    }
+
     private let defaults = UserDefaults.standard
     private var lastSent: [String: Date] = [:]
+
+    func threshold(for threshold: Threshold) -> Double {
+        switch threshold {
+        case .cpu: return value("alert.cpu", fallback: 90)
+        case .diskGB: return value("alert.diskGB", fallback: 10)
+        }
+    }
 
     func evaluate(_ snapshot: SystemSnapshot) {
         alert("cpu", title: "CPU 使用率过高", detail: String(format: "当前 %.0f%%", snapshot.cpuUsage * 100),

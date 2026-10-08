@@ -34,8 +34,9 @@ final class SystemLogStore {
     private let queue = DispatchQueue(label: "com.laogu.ailock.system-logs", qos: .utility)
     private let maximumEntries = 2_000
 
-    func fetch(since interval: TimeInterval = 30 * 60,
-               completion: @escaping (Result<[SystemLogEntry], Error>) -> Void) {
+    func fetch(since interval: TimeInterval = 10 * 60,
+               onBatch: @escaping ([SystemLogEntry], Int, Bool) -> Void,
+               completion: @escaping (Error?) -> Void) {
         queue.async {
             do {
                 let store = try OSLogStore(scope: .currentProcessIdentifier)
@@ -43,11 +44,12 @@ final class SystemLogStore {
                 let position = store.position(date: start)
                 let entries = try store.getEntries(at: position, matching: NSPredicate(format: "eventType == 1024 OR eventType == 2"))
 
-                var result: [SystemLogEntry] = []
+                var batch: [SystemLogEntry] = []
+                var count = 0
                 for entry in entries {
                     guard let log = entry as? OSLogEntryLog else { continue }
-                    result.append(SystemLogEntry(
-                        id: "\(log.date.timeIntervalSince1970)-\(log.processIdentifier)-\(result.count)",
+                    batch.append(SystemLogEntry(
+                        id: "\(log.date.timeIntervalSince1970)-\(log.processIdentifier)-\(count)",
                         date: log.date,
                         level: Self.level(for: log.level),
                         process: log.process,
@@ -55,11 +57,19 @@ final class SystemLogStore {
                         category: log.category,
                         message: log.composedMessage
                     ))
-                    if result.count >= self.maximumEntries { break }
+                    count += 1
+                    if batch.count >= 100 {
+                        let newestFirst = batch.reversed()
+                        onBatch(Array(newestFirst), count, false)
+                        batch.removeAll(keepingCapacity: true)
+                    }
+                    if count >= self.maximumEntries { break }
                 }
-                completion(.success(result.reversed()))
+                if !batch.isEmpty { onBatch(Array(batch.reversed()), count, false) }
+                onBatch([], count, true)
+                completion(nil)
             } catch {
-                completion(.failure(error))
+                completion(error)
             }
         }
     }

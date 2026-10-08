@@ -17,13 +17,28 @@ VERSION="${VERSION:-1.0}"
 BUILD_NUM="${BUILD_NUM:-1}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 
+# Preserve a user-supplied icon before recreating the build directory.
+CUSTOM_ICON=""
+if [[ -f icon.png ]]; then
+	CUSTOM_ICON="$(mktemp /tmp/ailock-icon.XXXXXX)"
+	cp icon.png "$CUSTOM_ICON"
+elif [[ -f build/icon.png ]]; then
+	CUSTOM_ICON="$(mktemp /tmp/ailock-icon.XXXXXX)"
+	cp build/icon.png "$CUSTOM_ICON"
+fi
+
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/AILock" AppDelegate.swift ClipboardHistory.swift DashboardWindow.swift DockController.swift HardwareInfo.swift LogStore.swift NetworkInspector.swift ProcessMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemMonitor.swift
+swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/AILock" AppDelegate.swift CacheCleaner.swift ClipboardHistory.swift DashboardWindow.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift NetworkHistory.swift NetworkInspector.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemMonitor.swift
 
-# 图标：1024 原图现画，再由 sips 派生各尺寸交给 iconutil 打包
-swiftc -swift-version 5 -o build/makeicon makeicon.swift
-build/makeicon build/icon.png >/dev/null
+# Use the supplied PNG if present; otherwise generate the default app icon.
+if [[ -n "$CUSTOM_ICON" ]]; then
+	cp "$CUSTOM_ICON" build/icon.png
+	rm -f "$CUSTOM_ICON"
+else
+	swiftc -swift-version 5 -o build/makeicon makeicon.swift
+	build/makeicon build/icon.png >/dev/null
+fi
 ICONSET=build/AILock.iconset
 mkdir -p "$ICONSET"
 for sz in 16 32 128 256 512; do
@@ -31,6 +46,7 @@ for sz in 16 32 128 256 512; do
 	sips -z $((sz*2)) $((sz*2)) build/icon.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+cp build/icon.png "$APP/Contents/Resources/StatusIcon.png"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,7 +62,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$BUILD_NUM</string>
-	<key>LSMinimumSystemVersion</key><string>13.0</string>
+	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key><string>Copyright © 2026 gu lao. All rights reserved.</string>
 	<key>LSUIElement</key><true/>
@@ -63,7 +79,9 @@ if [[ $RELEASE == 1 ]]; then
 	codesign --verify --strict --verbose=2 "$APP"
 	echo "✅ 已生成并正式签名 $(pwd)/$APP  (v$VERSION build $BUILD_NUM)"
 else
-	# 临时签名：让系统能稳定认出"还是同一个 App"，否则每次重编都要重新授权
-	codesign --force --sign - --timestamp=none "$APP"
-	echo "✅ 已生成 $(pwd)/$APP（开发版·临时签名）"
+	# 使用稳定的 Apple Developer 签名，避免 TCC 每次重建后丢失辅助功能授权。
+	DEV_SIGN_ID="${DEV_SIGN_ID:-Apple Development: gu lao (XY9G225SAM)}"
+	codesign --force --sign "$DEV_SIGN_ID" --timestamp=none "$APP"
+	codesign --verify --strict --verbose=2 "$APP"
+	echo "✅ 已生成并签名 $(pwd)/$APP（开发版；辅助功能授权身份稳定）"
 fi

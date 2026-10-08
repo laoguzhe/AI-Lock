@@ -14,11 +14,9 @@ struct NetworkConnection: Identifiable {
 
 enum NetworkInspector {
     static func connections() -> [NetworkConnection] {
-        // Public APIs do not provide a complete socket-to-process table for an ordinary app.
-        // netstat -n is used for connection metadata; PID attribution remains unavailable here.
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
-        task.arguments = ["-anv", "-p", "tcp"]
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-nP", "-iTCP", "-FpcnT"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()
@@ -26,11 +24,41 @@ enum NetworkInspector {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
-        return output.components(separatedBy: .newlines).compactMap { line in
-            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard fields.count >= 6, fields[0].hasPrefix("tcp") else { return nil }
-            return NetworkConnection(id: line, pid: 0, process: "未归属", protocolName: fields[0],
-                                     local: fields[3], remote: fields[4], state: fields[5])
+        var pid: Int32 = 0
+        var process = "未归属"
+        var local = ""
+        var remote = ""
+        var state = ""
+        var entries: [NetworkConnection] = []
+        for line in output.components(separatedBy: .newlines) {
+            guard let prefix = line.first else { continue }
+            let value = String(line.dropFirst())
+            switch prefix {
+            case "p":
+                if !local.isEmpty || !remote.isEmpty {
+                    appendConnection(pid: pid, process: process, local: local, remote: remote, state: state, to: &entries)
+                }
+                pid = Int32(value) ?? 0
+                process = "未归属"
+                local = ""; remote = ""; state = ""
+            case "c": process = value
+            case "n":
+                let endpoints = value.components(separatedBy: "->")
+                if endpoints.count == 2 { local = endpoints[0]; remote = endpoints[1] }
+                else { local = value; remote = "*" }
+            case "T":
+                if value.hasPrefix("ST=") { state = String(value.dropFirst(3)) }
+            default: continue
+            }
         }
+        appendConnection(pid: pid, process: process, local: local, remote: remote, state: state, to: &entries)
+        return entries
+    }
+
+    private static func appendConnection(pid: Int32, process: String, local: String, remote: String, state: String, to entries: inout [NetworkConnection]) {
+        guard !local.isEmpty else { return }
+        let id = "\(pid)|\(local)|\(remote)|\(state)"
+        entries.append(NetworkConnection(id: id, pid: pid, process: process, protocolName: "TCP",
+                                         local: local, remote: remote, state: state))
     }
 }

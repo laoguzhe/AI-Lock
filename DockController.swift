@@ -148,11 +148,42 @@ final class DockLock {
     private var snapFailures = 0
     private var nextPatrolAt: CFAbsoluteTime = 0
 
-    var enabled = true
+    var enabled = UserDefaults.standard.object(forKey: "dockLock.enabled") as? Bool ?? true
+
+    @discardableResult
+    func toggleEnabled() -> Bool {
+        if enabled, let tap {
+            enabled = false
+            CGEvent.tapEnable(tap: tap, enable: false)
+        } else if let tap {
+            enabled = true
+            CGEvent.tapEnable(tap: tap, enable: true)
+        } else {
+            if !AXIsProcessTrusted() {
+                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                _ = AXIsProcessTrustedWithOptions(options)
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                enabled = false
+            } else {
+                enabled = true
+                if !start() { enabled = false }
+            }
+            if !enabled {
+                log("DockLock 启动失败：辅助功能授权缺失或 CGEvent tap 创建失败")
+            }
+            if !enabled, tap == nil {
+                enabled = false
+            }
+        }
+        UserDefaults.standard.set(enabled, forKey: "dockLock.enabled")
+        return enabled
+    }
 
     // MARK: 启动
 
     func start() -> Bool {
+        if tap != nil { return true }
+        guard enabled else { return false }
         cfg = Config.load()
         refreshDisplays()
         edge = .current
@@ -243,12 +274,18 @@ final class DockLock {
         let name: String
         let isBuiltin: Bool
         let size: String
+        let bounds: CGRect
     }
 
     var screenChoices: [ScreenChoice] {
-        displays.map {
-            ScreenChoice(id: $0.id, name: name(for: $0.id), isBuiltin: $0.isBuiltin,
-                         size: "\(Int($0.bounds.width))×\(Int($0.bounds.height))")
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &ids, &count)
+        return ids.prefix(Int(count)).map { id in
+            let bounds = CGDisplayBounds(id)
+            return ScreenChoice(id: id, name: name(for: id), isBuiltin: CGDisplayIsBuiltin(id) != 0,
+                                size: "\(Int(bounds.width))×\(Int(bounds.height))", bounds: bounds)
         }
     }
 

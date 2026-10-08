@@ -10,8 +10,40 @@ struct MonitoredProcess: Identifiable {
     let memoryBytes: UInt64
     let startTime: Date?
     let isProtected: Bool
+    var ports: [Int] = []
+    var networkDown: Double = 0
+    var networkUp: Double = 0
 
     var id: Int32 { pid }
+}
+
+enum ProcessPortScanner {
+    static func listeningPorts() -> [pid_t: [Int]] {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        do { try task.run() } catch { return [:] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [:] }
+        var result: [pid_t: [Int]] = [:]
+        var pid: pid_t = 0
+        for line in output.components(separatedBy: .newlines) {
+            guard let prefix = line.first else { continue }
+            let value = String(line.dropFirst())
+            switch prefix {
+            case "p": pid = pid_t(value) ?? 0
+            case "n":
+                guard pid > 0, let portToken = value.split(separator: ":").last, let port = Int(portToken), (1...65535).contains(port) else { continue }
+                if !(result[pid]?.contains(port) ?? false) { result[pid, default: []].append(port) }
+            default: continue
+            }
+        }
+        return result
+    }
 }
 
 enum ProcessSort: String, CaseIterable {
