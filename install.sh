@@ -18,28 +18,11 @@ mkdir -p "$HOME/Applications"
 rm -rf "$DEST"
 cp -R build/AILock.app "$DEST"
 
-# 临时签名(ad-hoc)每次重编 cdhash 都变，系统会当成另一个程序：
-# 旧授权记录作废但仍显示为"已勾选"，还会在列表里堆重复条目。所以每次装都先清掉重授。
-tccutil reset Accessibility com.laogu.ailock >/dev/null 2>&1 || true
+# Migrate the legacy LaunchAgent to the same SMAppService used by the UI.
+# Do not reset TCC: a stable development signature should retain the user's permission.
+rm -f "$PLIST" "$HOME/Library/LaunchAgents/com.laogu.docklock.plist"
+"$DEST/Contents/MacOS/AILock" --register-login-item
+open "$DEST"
 
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>com.laogu.ailock</string>
-	<key>ProgramArguments</key>
-	<array><string>$DEST/Contents/MacOS/AILock</string></array>
-	<key>RunAtLoad</key><true/>
-	<!-- 刻意不用 KeepAlive：菜单栏工具必须能被用户真正退出，否则"退出"会被 launchd 秒拉起 -->
-	<key>KeepAlive</key><false/>
-	<key>ProcessType</key><string>Interactive</string>
-</dict>
-</plist>
-PLIST
-
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-
-echo "✅ 已安装到 $DEST，并注册开机自启"
-echo "   卸载：launchctl bootout gui/\$(id -u)/com.laogu.ailock && rm -rf \"$DEST\" \"$PLIST\""
+echo "✅ 已安装到 $DEST，登录项由应用设置统一管理"
+echo "   若系统要求批准，请到系统设置 › 通用 › 登录项中允许 AI Lock。"

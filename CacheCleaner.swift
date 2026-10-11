@@ -36,27 +36,28 @@ enum CacheCleaner {
         onBatch(batch.sorted { $0.size > $1.size }, true)
     }
 
-    @discardableResult
-    static func clean(_ entry: CacheEntry) -> Bool {
-        let path = entry.url.standardizedFileURL.path
-        let allowed = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches", isDirectory: true).standardizedFileURL.path
-        guard !entry.isSystem, path.hasPrefix(allowed + "/"),
-              let values = try? entry.url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
-              values.isDirectory == true, values.isSymbolicLink != true else { return false }
-        do {
-            let children = try FileManager.default.contentsOfDirectory(at: entry.url, includingPropertiesForKeys: nil)
-            for child in children { try FileManager.default.removeItem(at: child) }
-            return true
-        } catch {
-            return false
+    static func prepare(_ entries: [CacheEntry]) -> FileOperationPlan {
+        let root = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches", isDirectory: true)
+        var urls: [URL] = []
+        var rejected: [FileActionResult] = []
+        for entry in entries {
+            guard !entry.isSystem, ApplicationLocations.contains(entry.url, in: root),
+                  let identity = FileIdentity(entry.url), !identity.isSymlink else {
+                rejected.append(FileActionResult(url: entry.url, destination: nil, error: "缓存目录不在允许范围内")); continue
+            }
+            do { urls += try FileManager.default.contentsOfDirectory(at: entry.url, includingPropertiesForKeys: nil) }
+            catch { rejected.append(FileActionResult(url: entry.url, destination: nil, error: error.localizedDescription)) }
         }
+        let plan = FileOperationPlan.prepare(urls: urls, roots: [root])
+        return FileOperationPlan(items: plan.items, rejected: plan.rejected + rejected)
     }
 
+    @discardableResult
+    static func clean(_ entry: CacheEntry) -> Bool { prepare([entry]).execute().allSatisfy(\.succeeded) }
+
     static func cleanAll(_ entries: [CacheEntry]) -> (cleaned: Int, failed: Int) {
-        var cleaned = 0
-        let userEntries = entries.filter { !$0.isSystem }
-        for entry in userEntries where clean(entry) { cleaned += 1 }
-        return (cleaned, userEntries.count - cleaned)
+        let results = prepare(entries).execute()
+        return (results.filter(\.succeeded).count, results.filter { !$0.succeeded }.count)
     }
 
     static func formattedSize(_ bytes: Int64) -> String {
@@ -65,7 +66,7 @@ enum CacheCleaner {
 
     private static func directorySize(_ url: URL) -> Int64 {
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileAllocatedSizeKey, .totalFileAllocatedSizeKey]
-        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return 0 }
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys, options: []) else { return 0 }
         var total: Int64 = 0
         for case let fileURL as URL in enumerator {
             if (try? fileURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {

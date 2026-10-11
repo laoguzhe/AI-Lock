@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import IOKit
+import IOKit.ps
 import MachO
 
 struct SystemSnapshot {
@@ -17,6 +18,11 @@ struct SystemSnapshot {
     var totalReceived: UInt64
     var totalSent: UInt64
     var swapUsed: UInt64
+    var batteryPercent: Int? = nil
+    var isOnBattery = false
+    // ProcessInfo thermal state: nominal=0, fair=1, serious=2, critical=3.
+    var thermalLevel = 0
+    var networkSampleDuration: TimeInterval = 0
     var timestamp: Date
 
     static let empty = SystemSnapshot(cpuUsage: 0, userCPU: 0, systemCPU: 0,
@@ -27,26 +33,81 @@ struct SystemSnapshot {
                                       timestamp: .now)
 }
 
+
+struct NetworkCounters {
+    var received: UInt64
+    var sent: UInt64
+}
+
+/// Compare only interfaces present in both successful samples. A newly attached
+/// interface's lifetime counters are a baseline, never traffic for this interval.
+struct NetworkCounterTracker {
+    private var previous: [String: NetworkCounters]?
+    private var previousTime: TimeInterval?
+    private var totals = NetworkCounters(received: 0, sent: 0)
+
+    mutating func sample(_ interfaces: [String: NetworkCounters]?, at time: TimeInterval)
+        -> (download: UInt64, upload: UInt64, received: UInt64, sent: UInt64, duration: TimeInterval) {
+        guard let interfaces, time.isFinite else {
+            // A failed read invalidates the baseline so recovery cannot create a spike.
+            previous = nil
+            previousTime = nil
+            return (0, 0, totals.received, totals.sent, 0)
+        }
+        func sum(_ values: [UInt64]) -> UInt64 {
+            values.reduce(0) { partial, value in
+                let result = partial.addingReportingOverflow(value)
+                return result.overflow ? UInt64.max : result.partialValue
+            }
+        }
+        totals = NetworkCounters(received: sum(interfaces.values.map(\.received)),
+                                 sent: sum(interfaces.values.map(\.sent)))
+        defer { previous = interfaces; previousTime = time }
+        guard let previous, let previousTime, time > previousTime else {
+            return (0, 0, totals.received, totals.sent, 0)
+        }
+        var received: [UInt64] = []
+        var sent: [UInt64] = []
+        for (name, current) in interfaces {
+            guard let old = previous[name] else { continue }
+            received.append(current.received >= old.received ? current.received - old.received : 0)
+            sent.append(current.sent >= old.sent ? current.sent - old.sent : 0)
+        }
+        func rate(_ bytes: UInt64) -> UInt64 {
+            let value = Double(bytes) / (time - previousTime)
+            // Double(UInt64.max) rounds upward: check before conversion.
+            guard value.isFinite, value < Double(UInt64.max) else { return UInt64.max }
+            return UInt64(max(0, value))
+        }
+        return (rate(sum(received)), rate(sum(sent)), totals.received, totals.sent, time - previousTime)
+    }
+}
+
 final class SystemMonitor {
     private var previousCPUTicks: [UInt64]?
-    private var previousNetwork: (received: UInt64, sent: UInt64)?
-    private var previousSampleAt: Date?
+    private var networkTracker = NetworkCounterTracker()
     private var pressureSource: DispatchSourceMemoryPressure?
     private var currentPressure = "正常"
+    private let pressureLock = NSLock()
 
     init() {
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
         source.setEventHandler { [weak self] in
-            let events = source.data
+            guard let events = self?.pressureSource?.data else { return }
             DispatchQueue.main.async {
-                if events.contains(.critical) { self?.currentPressure = "严重" }
-                else if events.contains(.warning) { self?.currentPressure = "偏高" }
-                else { self?.currentPressure = "正常" }
+                guard let self else { return }
+                self.pressureLock.lock()
+                defer { self.pressureLock.unlock() }
+                if events.contains(.critical) { self.currentPressure = "严重" }
+                else if events.contains(.warning) { self.currentPressure = "偏高" }
+                else { self.currentPressure = "正常" }
             }
         }
         pressureSource = source
         source.resume()
     }
+
+    deinit { pressureSource?.cancel() }
 
     func sample() -> SystemSnapshot {
         var snapshot = SystemSnapshot.empty
@@ -60,24 +121,37 @@ final class SystemMonitor {
         snapshot.memoryTotal = memory.total
         snapshot.memoryPressure = memory.pressure
         snapshot.swapUsed = readSwapUsed()
+        snapshot.thermalLevel = ProcessInfo.processInfo.thermalState.rawValue
+        let battery = readBattery()
+        snapshot.batteryPercent = battery.percent
+        snapshot.isOnBattery = battery.onBattery
 
         let disk = readDisk()
         snapshot.diskUsed = disk.used
         snapshot.diskTotal = disk.total
 
-        let network = readNetwork()
-        let now = Date()
-        if let previousNetwork, let previousSampleAt {
-            let elapsed = max(now.timeIntervalSince(previousSampleAt), 0.001)
-            snapshot.networkDownload = UInt64(Double(network.received >= previousNetwork.received ? network.received - previousNetwork.received : 0) / elapsed)
-            snapshot.networkUpload = UInt64(Double(network.sent >= previousNetwork.sent ? network.sent - previousNetwork.sent : 0) / elapsed)
-        }
+        let network = networkTracker.sample(readNetwork(), at: ProcessInfo.processInfo.systemUptime)
+        snapshot.networkDownload = network.download
+        snapshot.networkUpload = network.upload
         snapshot.totalReceived = network.received
         snapshot.totalSent = network.sent
-        snapshot.timestamp = now
-        previousNetwork = network
-        previousSampleAt = now
+        snapshot.networkSampleDuration = network.duration
+        snapshot.timestamp = Date()
         return snapshot
+    }
+
+    private func readBattery() -> (percent: Int?, onBattery: Bool) {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return (nil, false) }
+        for source in sources {
+            guard let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+                  description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType,
+                  let current = description[kIOPSCurrentCapacityKey] as? Int,
+                  let maximum = description[kIOPSMaxCapacityKey] as? Int, maximum > 0 else { continue }
+            return (min(100, max(0, Int(Double(current) / Double(maximum) * 100))),
+                    description[kIOPSPowerSourceStateKey] as? String == kIOPSBatteryPowerValue)
+        }
+        return (nil, false)
     }
 
     private func readCPU() -> (total: Double, user: Double, system: Double) {
@@ -121,7 +195,8 @@ final class SystemMonitor {
 
         let free = UInt64(stats.free_count + stats.inactive_count + stats.speculative_count) * pageSize
         let used = total > free ? total - free : 0
-        return (used, total, currentPressure)
+        pressureLock.lock(); let pressure = currentPressure; pressureLock.unlock()
+        return (used, total, pressure)
     }
 
     private func readDisk() -> (used: UInt64, total: UInt64) {
@@ -143,13 +218,12 @@ final class SystemMonitor {
         return UInt64(values.xsu_used)
     }
 
-    private func readNetwork() -> (received: UInt64, sent: UInt64) {
+    private func readNetwork() -> [String: NetworkCounters]? {
         var address: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&address) == 0, let first = address else { return (0, 0) }
+        guard getifaddrs(&address) == 0, let first = address else { return nil }
         defer { freeifaddrs(address) }
 
-        var received: UInt64 = 0
-        var sent: UInt64 = 0
+        var interfaces: [String: NetworkCounters] = [:]
         var cursor: UnsafeMutablePointer<ifaddrs>? = first
         while let current = cursor {
             defer { cursor = current.pointee.ifa_next }
@@ -160,10 +234,9 @@ final class SystemMonitor {
             let interface = String(cString: name)
             guard interface != "lo0", !interface.hasPrefix("utun"), !interface.hasPrefix("awdl"), !interface.hasPrefix("llw") else { continue }
             let counters = data.assumingMemoryBound(to: if_data.self).pointee
-            received &+= UInt64(counters.ifi_ibytes)
-            sent &+= UInt64(counters.ifi_obytes)
+            interfaces[interface] = NetworkCounters(received: UInt64(counters.ifi_ibytes), sent: UInt64(counters.ifi_obytes))
         }
-        return (received, sent)
+        return interfaces
     }
 }
 

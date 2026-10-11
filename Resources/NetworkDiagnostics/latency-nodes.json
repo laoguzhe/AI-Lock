@@ -1,0 +1,594 @@
+[
+  {
+    "id": "甘肃",
+    "name": "甘肃",
+    "englishName": "Gansu",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.100.64.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.178.0.93",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "青海",
+    "name": "青海",
+    "englishName": "Qinghai",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "211.138.75.123",
+        "carrier": "区域节点"
+      },
+      {
+        "address": "202.100.128.68",
+        "carrier": "区域节点"
+      }
+    ]
+  },
+  {
+    "id": "广西",
+    "name": "广西",
+    "englishName": "Guangxi",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.103.225.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.103.224.68",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "贵州",
+    "name": "贵州",
+    "englishName": "Guizhou",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.98.192.67",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.98.198.167",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "重庆",
+    "name": "重庆",
+    "englishName": "Chongqing",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "61.128.192.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.128.128.68",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "北京",
+    "name": "北京",
+    "englishName": "Beijing",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "219.141.136.10",
+        "carrier": "电信"
+      },
+      {
+        "address": "219.141.140.10",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "福建",
+    "name": "福建",
+    "englishName": "Fujian",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "218.85.152.99",
+        "carrier": "电信"
+      },
+      {
+        "address": "218.85.157.99",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "安徽",
+    "name": "安徽",
+    "englishName": "Anhui",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "61.132.163.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.102.213.68",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "广东",
+    "name": "广东",
+    "englishName": "Guangdong",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.96.128.86",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.96.128.166",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "西藏",
+    "name": "西藏",
+    "englishName": "Tibet",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.98.224.68",
+        "carrier": "区域节点"
+      },
+      {
+        "address": "211.139.73.34",
+        "carrier": "区域节点"
+      }
+    ]
+  },
+  {
+    "id": "新疆",
+    "name": "新疆",
+    "englishName": "Xinjiang",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "61.128.114.133",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.128.114.166",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "海南",
+    "name": "海南",
+    "englishName": "Hainan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.100.192.68",
+        "carrier": "区域节点"
+      },
+      {
+        "address": "211.97.96.65",
+        "carrier": "区域节点"
+      }
+    ]
+  },
+  {
+    "id": "宁夏",
+    "name": "宁夏",
+    "englishName": "Ningxia",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "211.93.0.81",
+        "carrier": "区域节点"
+      },
+      {
+        "address": "218.203.101.3",
+        "carrier": "区域节点"
+      }
+    ]
+  },
+  {
+    "id": "陕西",
+    "name": "陕西",
+    "englishName": "Shaanxi",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "218.30.19.40",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.134.1.4",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "山西",
+    "name": "山西",
+    "englishName": "Shanxi",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.99.192.66",
+        "carrier": "联通"
+      },
+      {
+        "address": "202.99.192.68",
+        "carrier": "联通"
+      }
+    ]
+  },
+  {
+    "id": "湖北",
+    "name": "湖北",
+    "englishName": "Hubei",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.103.24.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.103.0.68",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "湖南",
+    "name": "湖南",
+    "englishName": "Hunan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "222.246.129.80",
+        "carrier": "电信"
+      },
+      {
+        "address": "59.51.78.211",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "四川",
+    "name": "四川",
+    "englishName": "Sichuan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "61.139.2.69",
+        "carrier": "电信"
+      },
+      {
+        "address": "218.6.200.139",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "云南",
+    "name": "云南",
+    "englishName": "Yunnan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "222.172.200.68",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.166.150.123",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "河北",
+    "name": "河北",
+    "englishName": "Hebei",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.99.160.68",
+        "carrier": "联通"
+      },
+      {
+        "address": "202.99.166.4",
+        "carrier": "联通"
+      }
+    ]
+  },
+  {
+    "id": "河南",
+    "name": "河南",
+    "englishName": "Henan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "222.88.88.88",
+        "carrier": "电信"
+      },
+      {
+        "address": "222.85.85.85",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "辽宁",
+    "name": "辽宁",
+    "englishName": "Liaoning",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.96.69.38",
+        "carrier": "联通"
+      },
+      {
+        "address": "202.96.64.68",
+        "carrier": "联通"
+      }
+    ]
+  },
+  {
+    "id": "山东",
+    "name": "山东",
+    "englishName": "Shandong",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "219.146.1.66",
+        "carrier": "电信"
+      },
+      {
+        "address": "219.147.1.66",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "天津",
+    "name": "天津",
+    "englishName": "Tianjin",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "219.150.32.132",
+        "carrier": "电信"
+      },
+      {
+        "address": "219.146.0.132",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "江西",
+    "name": "江西",
+    "englishName": "Jiangxi",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.101.224.69",
+        "carrier": "电信"
+      },
+      {
+        "address": "202.101.226.68",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "江苏",
+    "name": "江苏",
+    "englishName": "Jiangsu",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "218.2.2.2",
+        "carrier": "电信"
+      },
+      {
+        "address": "218.4.4.4",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "上海",
+    "name": "上海",
+    "englishName": "Shanghai",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.96.209.133",
+        "carrier": "电信"
+      },
+      {
+        "address": "116.228.111.118",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "浙江",
+    "name": "浙江",
+    "englishName": "Zhejiang",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.101.172.35",
+        "carrier": "电信"
+      },
+      {
+        "address": "61.153.177.196",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "吉林",
+    "name": "吉林",
+    "englishName": "Jilin",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.98.0.68",
+        "carrier": "联通"
+      },
+      {
+        "address": "202.98.5.68",
+        "carrier": "联通"
+      }
+    ]
+  },
+  {
+    "id": "内蒙古",
+    "name": "内蒙古",
+    "englishName": "Inner Mongolia",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "219.148.162.31",
+        "carrier": "电信"
+      },
+      {
+        "address": "222.74.39.50",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "黑龙江",
+    "name": "黑龙江",
+    "englishName": "Heilongjiang",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "219.147.198.230",
+        "carrier": "电信"
+      },
+      {
+        "address": "219.147.198.242",
+        "carrier": "电信"
+      }
+    ]
+  },
+  {
+    "id": "台湾",
+    "name": "台湾",
+    "englishName": "Taiwan",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "168.95.1.1",
+        "carrier": "中华电信"
+      },
+      {
+        "address": "168.95.192.1",
+        "carrier": "中华电信"
+      }
+    ]
+  },
+  {
+    "id": "香港",
+    "name": "香港",
+    "englishName": "Hong Kong",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "61.10.0.130",
+        "carrier": "Cable TV"
+      },
+      {
+        "address": "61.10.1.130",
+        "carrier": "Cable TV"
+      }
+    ]
+  },
+  {
+    "id": "澳门",
+    "name": "澳门",
+    "englishName": "Macau",
+    "overseas": false,
+    "targets": [
+      {
+        "address": "202.175.3.3",
+        "carrier": "澳门大学"
+      }
+    ]
+  },
+  {
+    "id": "tokyo",
+    "name": "东京",
+    "englishName": "Tokyo",
+    "overseas": true,
+    "targets": [
+      {
+        "address": "108.61.201.151",
+        "carrier": "Vultr"
+      }
+    ],
+    "source": "https://hnd-jp-ping.vultr.com/"
+  },
+  {
+    "id": "singapore",
+    "name": "新加坡",
+    "englishName": "Singapore",
+    "overseas": true,
+    "targets": [
+      {
+        "address": "45.32.100.168",
+        "carrier": "Vultr"
+      }
+    ],
+    "source": "https://sgp-ping.vultr.com/"
+  },
+  {
+    "id": "los-angeles",
+    "name": "洛杉矶",
+    "englishName": "Los Angeles",
+    "overseas": true,
+    "targets": [
+      {
+        "address": "108.61.219.200",
+        "carrier": "Vultr"
+      }
+    ],
+    "source": "https://lax-ca-us-ping.vultr.com/"
+  },
+  {
+    "id": "frankfurt",
+    "name": "法兰克福",
+    "englishName": "Frankfurt",
+    "overseas": true,
+    "targets": [
+      {
+        "address": "108.61.210.117",
+        "carrier": "Vultr"
+      }
+    ],
+    "source": "https://fra-de-ping.vultr.com/"
+  }
+]

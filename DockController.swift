@@ -17,6 +17,7 @@
 import Cocoa
 import CoreGraphics
 import ApplicationServices
+import OSLog
 
 // MARK: - 配置（每 3 秒热重载，改完立刻生效）
 
@@ -30,14 +31,13 @@ struct Config {
     /// 锁到哪块屏：builtin=内置屏(默认) / main=主屏 / 直接填 CGDirectDisplayID 数字（台式机多外接时用）
     var targetDisplay = "builtin"
 
-    static func load() -> Config {
+    static func load(defaults d: UserDefaults = .standard) -> Config {
         var c = Config()
-        let d = UserDefaults.standard   // 不能用 UserDefaults(suiteName:)：suiteName 等于自身 bundle id 时返回 nil
-        if d.object(forKey: "edgeMargin") != nil { c.edgeMargin = CGFloat(d.integer(forKey: "edgeMargin")) }
+        if d.object(forKey: "edgeMargin") != nil { c.edgeMargin = CGFloat(SettingValue.read("edgeMargin", fallback: 6, defaults: d)) }
         if d.object(forKey: "warpAssist") != nil { c.warpAssist = d.bool(forKey: "warpAssist") }
         if d.object(forKey: "autoSnap") != nil { c.autoSnap = d.bool(forKey: "autoSnap") }
-        if d.object(forKey: "snapHoldMs") != nil { c.snapHoldMs = d.integer(forKey: "snapHoldMs") }
-        if d.object(forKey: "idleBeforeSnapMs") != nil { c.idleBeforeSnapMs = d.integer(forKey: "idleBeforeSnapMs") }
+        if d.object(forKey: "snapHoldMs") != nil { c.snapHoldMs = min(2000, max(160, d.integer(forKey: "snapHoldMs"))) }
+        if d.object(forKey: "idleBeforeSnapMs") != nil { c.idleBeforeSnapMs = min(10000, max(200, d.integer(forKey: "idleBeforeSnapMs"))) }
         if d.object(forKey: "verboseLog") != nil { c.verboseLog = d.bool(forKey: "verboseLog") }
         if let t = d.string(forKey: "targetDisplay") { c.targetDisplay = t }
         return c
@@ -51,12 +51,22 @@ private let logFmt: DateFormatter = {
     let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f
 }()
 
+private let appLogger = Logger(subsystem: "com.laogu.ailock", category: "application")
+private let logQueue = DispatchQueue(label: "com.laogu.ailock.file-log", qos: .utility)
+
 func log(_ msg: String) {
-    let line = "[\(logFmt.string(from: Date()))] \(msg)\n"
-    if let h = try? FileHandle(forWritingTo: logURL) {
-        h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
-    } else {
-        try? line.write(to: logURL, atomically: true, encoding: .utf8)
+    appLogger.notice("\(msg, privacy: .public)")
+    logQueue.async {
+        let line = "[\(logFmt.string(from: Date()))] \(msg)\n"
+        let manager = FileManager.default
+        if let size = (try? manager.attributesOfItem(atPath: logURL.path)[.size]) as? NSNumber, size.intValue > 1_048_576 {
+            let archive = logURL.appendingPathExtension("1")
+            try? manager.removeItem(at: archive)
+            try? manager.moveItem(at: logURL, to: archive)
+        }
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+        } else { try? line.write(to: logURL, atomically: true, encoding: .utf8) }
     }
 }
 
@@ -145,13 +155,67 @@ final class DockLock {
 
     private var lastMoveAt: CFAbsoluteTime = 0
     private var snapping = false
+    private var snapTimer: Timer?
+    private let syntheticEventTag: Int64 = 0x41494C4B
     private var snapFailures = 0
     private var nextPatrolAt: CFAbsoluteTime = 0
 
+    private var authorizationTimer: Timer?
+    var waitingForAuthorization: Bool { authorizationTimer != nil }
+    static let stateChanged = Notification.Name("AILock.DockLockStateChanged")
     var enabled = UserDefaults.standard.object(forKey: "dockLock.enabled") as? Bool ?? true
+
+    private func publishEnabledState() {
+        UserDefaults.standard.set(enabled, forKey: "dockLock.enabled")
+        NotificationCenter.default.post(name: Self.stateChanged, object: self)
+    }
+
+    private func resumeAfterAuthorization() {
+        guard AXIsProcessTrusted() else { return }
+        authorizationTimer?.invalidate(); authorizationTimer = nil
+        enabled = true
+        if !start() {
+            enabled = false
+            log("DockLock：已获辅助功能授权，但事件监听创建失败；请重启当前 AI Lock。")
+        }
+        publishEnabledState()
+    }
+
+    private func requestAuthorization() {
+        enabled = false
+        let appURL = Bundle.main.bundleURL
+        let alert = NSAlert()
+        alert.messageText = L10n.text("DockLock 需要辅助功能权限")
+        alert.informativeText = L10n.format("请授权当前运行的 %{0}。\n当前路径：%{1}\n\n若列表只有 AILock-QuickActions.app 等旧名称，不能只凭名称确认权限。可用列表的“+”添加当前应用。授权后 DockLock 会自动重试，无需反复点击。", arguments: [appURL.lastPathComponent, appURL.path])
+        alert.addButton(withTitle: L10n.text("打开辅助功能设置"))
+        alert.addButton(withTitle: L10n.text("在 Finder 显示当前应用"))
+        alert.addButton(withTitle: L10n.text("取消"))
+        let response = alert.runModal()
+        guard response != .alertThirdButtonReturn else { publishEnabledState(); return }
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        if response == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([appURL])
+        } else {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        }
+        // The system prompt is asynchronous; keep the user's enable intent until trust arrives.
+        authorizationTimer = Timer(timeInterval: 2, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.resumeAfterAuthorization()
+        }
+        RunLoop.main.add(authorizationTimer!, forMode: .common)
+        resumeAfterAuthorization()
+        publishEnabledState()
+    }
 
     @discardableResult
     func toggleEnabled() -> Bool {
+        cancelSnap()
+        if waitingForAuthorization {
+            resumeAfterAuthorization()
+            return enabled
+        }
         if enabled, let tap {
             enabled = false
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -160,10 +224,8 @@ final class DockLock {
             CGEvent.tapEnable(tap: tap, enable: true)
         } else {
             if !AXIsProcessTrusted() {
-                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-                _ = AXIsProcessTrustedWithOptions(options)
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                enabled = false
+                requestAuthorization()
+                return enabled
             } else {
                 enabled = true
                 if !start() { enabled = false }
@@ -175,7 +237,7 @@ final class DockLock {
                 enabled = false
             }
         }
-        UserDefaults.standard.set(enabled, forKey: "dockLock.enabled")
+        publishEnabledState()
         return enabled
     }
 
@@ -224,7 +286,14 @@ final class DockLock {
 
         // 配置热重载 + 第二道防线巡检
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            self?.cfg = Config.load()
+            guard let self else { return }
+            let targetChanged = self.cfg.targetDisplay != Config.load().targetDisplay
+            self.cfg = Config.load()
+            if targetChanged {
+                self.refreshDisplays()
+                self.snapFailures = 0
+                self.nextPatrolAt = 0
+            }
         }
         Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
             self?.patrol()
@@ -238,6 +307,7 @@ final class DockLock {
     // MARK: 屏幕拓扑
 
     private func refreshDisplays() {
+        cancelSnap()
         var count: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &count)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
@@ -297,15 +367,16 @@ final class DockLock {
     var targetName: String { name(for: targetID) }
 
     private func name(for id: CGDirectDisplayID) -> String {
-        if displays.first(where: { $0.id == id })?.isBuiltin == true { return "主屏" }
+        if displays.first(where: { $0.id == id })?.isBuiltin == true { return L10n.text("主屏") }
         let match = NSScreen.screens.first {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
         }
-        return match?.localizedName ?? "显示器 \(id)"
+        return match?.localizedName ?? L10n.format("显示器 %{0}", arguments: [String(id)])
     }
 
     /// 切换目标屏。改完不用手动搬 Dock —— 巡检会发现它不在新目标屏，自动拽过去。
     func setTarget(_ value: String) {
+        cancelSnap()
         UserDefaults.standard.set(value, forKey: "targetDisplay")
         cfg = Config.load()
         refreshDisplays()
@@ -326,10 +397,14 @@ final class DockLock {
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // 系统会因超时把 tap 关掉，必须自愈，否则工具"静默失效"
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true); log("event tap 被系统关闭，已重新启用") }
+            if enabled, let tap { CGEvent.tapEnable(tap: tap, enable: true); log("event tap 被系统关闭，已重新启用") }
             return Unmanaged.passUnretained(event)
         }
-        lastMoveAt = CFAbsoluteTimeGetCurrent()
+        if event.getIntegerValueField(.eventSourceUserData) != syntheticEventTag {
+            lastMoveAt = CFAbsoluteTimeGetCurrent()
+            // Real mouse input takes priority; never jump back over the user's movement.
+            if snapping { cancelSnap() }
+        }
         guard enabled, !snapping else { return Unmanaged.passUnretained(event) }
 
         let loc = event.location
@@ -418,7 +493,7 @@ final class DockLock {
         let src = CGEventSource(stateID: .hidSystemState)
         var ticks = 0
         let total = max(4, cfg.snapHoldMs / 40)
-        Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] t in
+        let timer = Timer(timeInterval: 0.04, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             ticks += 1
             let jitter: CGPoint
@@ -426,16 +501,27 @@ final class DockLock {
             case .bottom: jitter = CGPoint(x: lure.x + (ticks % 2 == 0 ? 3 : -3), y: lure.y)
             case .left, .right: jitter = CGPoint(x: lure.x, y: lure.y + (ticks % 2 == 0 ? 3 : -3))
             }
-            CGEvent(mouseEventSource: src, mouseType: .mouseMoved,
-                    mouseCursorPosition: jitter, mouseButton: .left)?.post(tap: .cghidEventTap)
+            let event = CGEvent(mouseEventSource: src, mouseType: .mouseMoved,
+                                mouseCursorPosition: jitter, mouseButton: .left)
+            event?.setIntegerValueField(.eventSourceUserData, value: self.syntheticEventTag)
+            event?.post(tap: .cghidEventTap)
 
             if ticks >= total {
                 t.invalidate()
                 CGWarpMouseCursorPosition(saved)
                 CGAssociateMouseAndMouseCursorPosition(1)
                 self.snapping = false
+                self.snapTimer = nil
             }
         }
+        snapTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func cancelSnap() {
+        snapTimer?.invalidate()
+        snapTimer = nil
+        snapping = false
     }
 }
 

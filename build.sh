@@ -15,6 +15,7 @@ RELEASE=0
 # 版本号走环境变量，发版时 VERSION=1.1 BUILD_NUM=3 ./release.sh 即可，不用改脚本
 VERSION="${VERSION:-1.0}"
 BUILD_NUM="${BUILD_NUM:-1}"
+[[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ && "$BUILD_NUM" =~ ^[0-9]+$ ]] || { echo "Invalid VERSION or BUILD_NUM" >&2; exit 1; }
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 
 # Preserve a user-supplied icon before recreating the build directory.
@@ -29,14 +30,43 @@ fi
 
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-swiftc -O -swift-version 5 -o "$APP/Contents/MacOS/AILock" AppDelegate.swift CacheCleaner.swift ClipboardHistory.swift DashboardWindow.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift NetworkHistory.swift NetworkInspector.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemMonitor.swift
+SOURCES=(NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
+# Compile a fixed source snapshot when other development tasks edit the workspace.
+SOURCE_SNAPSHOT="$(mktemp -d /tmp/ailock-build-sources.XXXXXX)"
+trap 'rm -rf "$SOURCE_SNAPSHOT"' EXIT
+SNAPSHOT_SOURCES=()
+for source in "${SOURCES[@]}"; do
+    mkdir -p "$SOURCE_SNAPSHOT/$(dirname "$source")"
+    cp "$source" "$SOURCE_SNAPSHOT/$source"
+    SNAPSHOT_SOURCES+=("$SOURCE_SNAPSHOT/$source")
+done
+# Release artifacts contain both supported architectures; local builds use the host architecture.
+if [[ $RELEASE == 1 ]]; then
+    ARCHS="${AILOCK_ARCHS:-arm64 x86_64}"
+else
+    ARCHS="${AILOCK_ARCHS:-$(uname -m)}"
+fi
+BINARIES=()
+for arch in $ARCHS; do
+    [[ "$arch" == "arm64" || "$arch" == "x86_64" ]] || { echo "Unsupported architecture: $arch" >&2; exit 1; }
+    binary="build/AILock-$arch"
+    swiftc -O -swift-version 5 -target "$arch-apple-macos14.0" -o "$binary" "${SNAPSHOT_SOURCES[@]}"
+    BINARIES+=("$binary")
+done
+if [[ ${#BINARIES[@]} -gt 1 ]]; then
+    lipo -create "${BINARIES[@]}" -output "$APP/Contents/MacOS/AILock"
+else
+    cp "${BINARIES[0]}" "$APP/Contents/MacOS/AILock"
+fi
+
+cp -R Resources/NetworkDiagnostics "$APP/Contents/Resources/NetworkDiagnostics"
 
 # Use the supplied PNG if present; otherwise generate the default app icon.
 if [[ -n "$CUSTOM_ICON" ]]; then
 	cp "$CUSTOM_ICON" build/icon.png
 	rm -f "$CUSTOM_ICON"
 else
-	swiftc -swift-version 5 -o build/makeicon makeicon.swift
+	swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" -o build/makeicon makeicon.swift
 	build/makeicon build/icon.png >/dev/null
 fi
 ICONSET=build/AILock.iconset
@@ -65,6 +95,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key><string>Copyright © 2026 gu lao. All rights reserved.</string>
+	<key>NSSystemExtensionUsageDescription</key><string>AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。</string>
 	<key>LSUIElement</key><true/>
 </dict>
 </plist>
@@ -80,8 +111,10 @@ if [[ $RELEASE == 1 ]]; then
 	echo "✅ 已生成并正式签名 $(pwd)/$APP  (v$VERSION build $BUILD_NUM)"
 else
 	# 使用稳定的 Apple Developer 签名，避免 TCC 每次重建后丢失辅助功能授权。
-	DEV_SIGN_ID="${DEV_SIGN_ID:-Apple Development: gu lao (XY9G225SAM)}"
+	# Prefer an available stable development identity. Other contributors can build ad-hoc.
+    DEFAULT_DEV_ID="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Apple Development/{print $2; exit}')"
+    DEV_SIGN_ID="${DEV_SIGN_ID:-${DEFAULT_DEV_ID:--}}"
 	codesign --force --sign "$DEV_SIGN_ID" --timestamp=none "$APP"
 	codesign --verify --strict --verbose=2 "$APP"
-	echo "✅ 已生成并签名 $(pwd)/$APP（开发版；辅助功能授权身份稳定）"
+	echo "✅ 已生成并签名 $(pwd)/${APP}（开发版；签名身份：${DEV_SIGN_ID}）"
 fi

@@ -1,0 +1,39 @@
+name: Validate AI Lock
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core XCTest
+        run: swift test
+      - name: Isolated regressions
+        run: ./tests/run.sh
+      - name: Directory index integration
+        run: ./tests/index-integration/run.sh
+      - name: TCP and UDP fixture snapshot
+        run: ./tests/network-snapshot/run.sh
+      - name: Profile capability validation
+        run: python3 tests/profile-validation/run.py
+      - name: IPC protocol transport
+        run: ./tests/ipc-protocol/run.sh
+      - name: Build application
+        env:
+          AILOCK_ARCHS: arm64 x86_64
+          DEV_SIGN_ID: '-'
+        run: ./build.sh
+      - name: Compile extension prototypes
+        run: ./extensions/build-prototypes.sh
+      - name: Validate Xcode targets
+        run: |
+          for scheme in AILock AuditPrototype FilterPrototype; do
+            xcodebuild -project AILock.xcodeproj -scheme "$scheme" -configuration Debug -derivedDataPath "$RUNNER_TEMP/ailock-xcode" CODE_SIGNING_ALLOWED=NO build
+          done
+      - name: Validate bundle
+        run: codesign --verify --deep --strict build/AILock.app

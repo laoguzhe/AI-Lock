@@ -1,47 +1,46 @@
-import AppKit
-import UserNotifications
+import Foundation
+
+extension Notification.Name {
+    static let resourceAlertPreview = Notification.Name("resourceAlertPreview")
+}
 
 final class ResourceAlerts {
-    enum Threshold {
-        case cpu, diskGB
-    }
+    enum Threshold { case cpu, memory, diskGB }
+    enum Metric: String, CaseIterable { case cpu, memory, disk, network, swap, battery, thermal, camera, microphone }
+    private let defaults: UserDefaults
+    private(set) var activeMetrics: Set<Metric> = []
 
-    private let defaults = UserDefaults.standard
-    private var lastSent: [String: Date] = [:]
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     func threshold(for threshold: Threshold) -> Double {
         switch threshold {
         case .cpu: return value("alert.cpu", fallback: 90)
+        case .memory: return value("alert.memory", fallback: 80)
         case .diskGB: return value("alert.diskGB", fallback: 10)
         }
     }
 
-    func evaluate(_ snapshot: SystemSnapshot) {
-        alert("cpu", title: "CPU 使用率过高", detail: String(format: "当前 %.0f%%", snapshot.cpuUsage * 100),
-              triggered: snapshot.cpuUsage * 100 >= value("alert.cpu", fallback: 90))
-        alert("memory", title: "内存压力偏高", detail: "macOS 内存压力：\(snapshot.memoryPressure)",
-              triggered: snapshot.memoryPressure == "偏高" || snapshot.memoryPressure == "严重")
+    @discardableResult
+    func evaluate(_ snapshot: SystemSnapshot) -> Set<Metric> {
+        var active = Set<Metric>()
+        if snapshot.cpuUsage * 100 >= value("alert.cpu", fallback: 90) { active.insert(.cpu) }
+        let memoryUsage = snapshot.memoryTotal > 0 ? Double(snapshot.memoryUsed) / Double(snapshot.memoryTotal) * 100 : 0
+        if snapshot.memoryPressure == "偏高" || snapshot.memoryPressure == "严重" ||
+            (snapshot.memoryTotal > 0 && memoryUsage >= value("alert.memory", fallback: 80)) { active.insert(.memory) }
         let freeDisk = snapshot.diskTotal > snapshot.diskUsed ? snapshot.diskTotal - snapshot.diskUsed : 0
-        let diskThreshold = UInt64(max(value("alert.diskGB", fallback: 10), 1) * 1_000_000_000)
-        alert("disk", title: "磁盘空间不足", detail: "可用空间 \(formattedBytes(freeDisk))", triggered: freeDisk < diskThreshold)
-        alert("network", title: "网络流量突增", detail: "↓\(formattedRate(snapshot.networkDownload))  ↑\(formattedRate(snapshot.networkUpload))",
-              triggered: max(snapshot.networkDownload, snapshot.networkUpload) >= UInt64(max(value("alert.networkMB", fallback: 50), 1) * 1_000_000))
+        if snapshot.diskTotal > 0 && Double(freeDisk) < value("alert.diskGB", fallback: 10) * 1_000_000_000 { active.insert(.disk) }
+        if Double(max(snapshot.networkDownload, snapshot.networkUpload)) >= value("alert.networkMB", fallback: 50) * 1_000_000 { active.insert(.network) }
+        if Double(snapshot.swapUsed) >= value("alert.swapGB", fallback: 4) * 1_000_000_000 { active.insert(.swap) }
+        if snapshot.isOnBattery, let percent = snapshot.batteryPercent,
+           Double(percent) <= value("alert.batteryPercent", fallback: 20) { active.insert(.battery) }
+        if snapshot.thermalLevel >= Int(value("alert.thermalLevel", fallback: 2)) { active.insert(.thermal) }
+        if defaults.bool(forKey: "alert.camera.enabled"), MediaAccessMonitor.shared.cameraInUse { active.insert(.camera) }
+        if defaults.bool(forKey: "alert.microphone.enabled"), MediaAccessMonitor.shared.microphoneInUse { active.insert(.microphone) }
+        activeMetrics = active
+        return active
     }
 
     private func value(_ key: String, fallback: Double) -> Double {
-        defaults.object(forKey: key) == nil ? fallback : defaults.double(forKey: key)
-    }
-
-    private func alert(_ key: String, title: String, detail: String, triggered: Bool) {
-        guard triggered else { return }
-        let now = Date()
-        guard now.timeIntervalSince(lastSent[key] ?? .distantPast) >= 300 else { return }
-        lastSent[key] = now
-        guard defaults.object(forKey: "alert.notificationsEnabled") == nil || defaults.bool(forKey: "alert.notificationsEnabled") else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = detail
-        let request = UNNotificationRequest(identifier: "ailock.\(key)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        SettingValue.read(key, fallback: fallback, defaults: defaults)
     }
 }

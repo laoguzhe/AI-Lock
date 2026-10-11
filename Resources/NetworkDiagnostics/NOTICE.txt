@@ -1,0 +1,35 @@
+China province geometry
+Source: https://github.com/twobin/china-map-geojson/blob/master/src/china.js
+Package: china-map-geojson 1.0.4; ISC license
+Converted from CommonJS to JSON; original province geometry and properties retained.
+
+ISC License
+Copyright (c) twobin
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+Regional landmark address sources (used as ICMP targets, not DNS settings):
+https://github.com/easonjim/dns-server-list/blob/master/README.md
+https://tool.aitags.cn/tools/base_alldns
+https://github.com/nextkitt/vultr-speed-test/blob/master/vultr-speed-test.sh
+https://www.vultr.com/resources/faq/#downloadspeedtests
+
+UI and local probe implementation written for AI Lock.
+Design reference: https://github.com/Antman2023/SmartPingNext
+No SmartPingNext implementation code is bundled.
+Node location labels describe public catalogue entries; locations and reachability
+can change. These are representative endpoints, not province-wide averages.
+
+Official overseas Looking Glass sources (published IPs avoid fake-DNS addresses):
+https://hnd-jp-ping.vultr.com/
+https://sgp-ping.vultr.com/
+https://lax-ca-us-ping.vultr.com/
+https://fra-de-ping.vultr.com/
