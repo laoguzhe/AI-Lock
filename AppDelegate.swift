@@ -140,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             }
             let group = NSMutableAttributedString(attributedString: metricAttachment(symbol, description: metric.rawValue))
             group.append(statusSpacing(2))
-            group.append(statusValue(value, isAlert: isAlert, isLast: metric == visibleMetrics.last))
+            group.append(statusValue(value, isAlert: isAlert, isLast: metric == visibleMetrics.last, preserveTrailingWhitespace: metric == .network))
             items.append(group)
         }
         let title = NSMutableAttributedString(string: "")
@@ -183,14 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             scale += 1
         }
         let number = String(format: value < 10 ? "%.1f" : "%.0f", value)
-        return String(repeating: " ", count: max(0, 4 - number.count)) + number
+        return number + String(repeating: " ", count: max(0, 4 - number.count))
     }
 
-    private func statusValue(_ value: String, isAlert: Bool, isLast: Bool) -> NSAttributedString {
+    private func statusValue(_ value: String, isAlert: Bool, isLast: Bool, preserveTrailingWhitespace: Bool = false) -> NSAttributedString {
         let font = NSFont.monospacedSystemFont(ofSize: statusMetricFontSize, weight: .medium)
         // Trim the final group instead of moving reserved whitespace between
         // its icon and number. Other groups retain their stable width.
-        let displayedValue = isLast ? value.trimmingCharacters(in: .whitespaces) : value
+        let displayedValue = isLast && !preserveTrailingWhitespace ? value.trimmingCharacters(in: .whitespaces) : value
         let text = NSAttributedString(string: displayedValue, attributes: [.font: font, .foregroundColor: isAlert ? NSColor.white : NSColor.labelColor])
         // Both states reserve the same bounds, so triggering or pulsing an alert
         // never changes the position of neighboring metrics.
@@ -447,6 +447,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
 @main
 enum AILockMain {
     static func main() {
+        if let hookIndex = CommandLine.arguments.firstIndex(of: "--ailock-agent-hook"),
+           CommandLine.arguments.count > hookIndex + 2 {
+            let provider = CommandLine.arguments[hookIndex + 1]
+            let mode = CommandLine.arguments[hookIndex + 2]
+            exit(AgentHookRuntime.run(providerName: provider, modeName: mode))
+        }
         if CommandLine.arguments.contains("--register-login-item") {
             do {
                 if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }

@@ -7,13 +7,13 @@
 #       --apple-id <你的AppleID> --team-id TQ74Z4L53F --password <App专用密码>
 #   App 专用密码在 https://appleid.apple.com → 登录与安全 → App 专用密码 生成。
 #
-#   发版：VERSION=1.1 BUILD_NUM=2 ./release.sh
+#   发版：VERSION=1.2 BUILD_NUM=3 ./release.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-1.0}"
-BUILD_NUM="${BUILD_NUM:-1}"
+VERSION="${VERSION:-1.2}"
+BUILD_NUM="${BUILD_NUM:-3}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 PROFILE="${NOTARY_PROFILE:-docklock-notary}"
 

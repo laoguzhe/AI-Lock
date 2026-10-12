@@ -59,6 +59,7 @@ private struct FileAuditPage: View {
                 }.fixedSize()
             }
             AIUsageCard(tracker: aiUsage, english: L10n.isEnglish)
+            AgentHooksCard()
             VStack(alignment: .leading, spacing: 12) {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 4), alignment: .leading, spacing: 8) {
                     filterField("程序") {
@@ -208,5 +209,94 @@ private struct FileAuditPage: View {
             let data = try JSONSerialization.data(withJSONObject: ["events": rows, "gaps": audit.gaps, "scope": scope, "operation": operation, "sensitiveOnly": sensitiveOnly, "limit": 10000, "retentionDays": 7, "storageStatus": audit.historyStatus, "application": application, "period": period, "unreviewedOnly": unreviewedOnly, "blocksAccess": false], options: [.prettyPrinted, .sortedKeys])
             try data.write(to: url, options: .atomic); exportError = ""
         } catch { exportError = "导出失败：" + error.localizedDescription }
+    }
+}
+
+private struct AgentHooksCard: View {
+    @ObservedObject private var manager = AgentHookManager.shared
+    @ObservedObject private var history = AgentHookStore.shared
+    @State private var commandRules = ""
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L10n.text("Agent hooks 只记录 Agent 实际发出的受支持工具调用，不需要 ES 授权。事件保存在本机；不会保存文件内容或工具输出。未经过 hook 的操作不会被覆盖。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(AgentHookProvider.allCases) { provider in
+                    HStack {
+                        Text(L10n.text(provider.rawValue)).frame(width: 100, alignment: .leading)
+                        Text(L10n.text(manager.statuses[provider] ?? "未接入"))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(manager.statuses[provider] ?? "")
+                        Spacer()
+                        if (manager.statuses[provider] ?? "").contains("已接入") {
+                            Button(L10n.text("移除 hook")) { manager.uninstall(provider) }
+                        } else {
+                            Button(L10n.text("接入")) { manager.install(provider) }
+                        }
+                    }
+                }
+                Divider()
+                Toggle(L10n.text("阻止对敏感路径的写入"), isOn: Binding(
+                    get: { manager.policy.blockSensitiveWrites },
+                    set: { manager.savePolicy(blockSensitiveWrites: $0, blockDestructiveCommands: manager.policy.blockDestructiveCommands, commandFragments: commandRules) }
+                ))
+                Toggle(L10n.text("阻止匹配危险命令规则的调用"), isOn: Binding(
+                    get: { manager.policy.blockDestructiveCommands },
+                    set: { manager.savePolicy(blockSensitiveWrites: manager.policy.blockSensitiveWrites, blockDestructiveCommands: $0, commandFragments: commandRules) }
+                ))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(L10n.text("危险命令片段（每行一条）")).font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $commandRules).font(.system(.caption, design: .monospaced)).frame(height: 58)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.2)))
+                    HStack {
+                        Text(L10n.text("默认规则：rm -rf /、git push --force、git reset --hard"))
+                            .font(.caption2).foregroundStyle(.tertiary)
+                        Spacer()
+                        if !manager.policyStatus.isEmpty {
+                            Text(L10n.text(manager.policyStatus)).font(.caption2).foregroundStyle(manager.policyStatus.contains("失败") ? Color.orange : Color.secondary)
+                        }
+                        Button(L10n.text("保存策略")) {
+                            manager.savePolicy(blockSensitiveWrites: manager.policy.blockSensitiveWrites,
+                                               blockDestructiveCommands: manager.policy.blockDestructiveCommands,
+                                               commandFragments: commandRules)
+                        }
+                    }
+                }
+                Divider()
+                Text(L10n.text("最近的 Agent 调用")).font(.subheadline.weight(.semibold))
+                if history.events.isEmpty {
+                    Text(L10n.text("尚无 hook 事件。接入后重启对应 Agent，再执行一次工具调用。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(history.events.prefix(8)) ) { event in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(event.date.formatted(date: .omitted, time: .shortened)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(L10n.text(event.provider)) · \(event.tool) · \(event.outcome) · \(event.decision)").font(.caption.weight(.medium))
+                                Text(event.command.isEmpty ? event.path : event.command)
+                                    .font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                    .help(event.command.isEmpty ? event.path : event.command)
+                                if !event.reason.isEmpty {
+                                    Text(event.reason).font(.caption2).foregroundStyle(.orange).lineLimit(2)
+                                }
+                                Text(L10n.format("会话 %{0}", arguments: [event.sessionID.isEmpty ? "—" : String(event.sessionID.suffix(12))]))
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            Label(L10n.text("Agent Hooks（无需 ES 授权）"), systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.headline)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .onAppear {
+            if commandRules.isEmpty { commandRules = manager.policy.commandFragments.joined(separator: "\n") }
+            history.refresh()
+        }
     }
 }

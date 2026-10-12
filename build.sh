@@ -12,9 +12,9 @@ APP="build/AILock.app"
 RELEASE=0
 [[ "${1:-}" == "--release" ]] && RELEASE=1
 
-# 版本号走环境变量，发版时 VERSION=1.1 BUILD_NUM=3 ./release.sh 即可，不用改脚本
-VERSION="${VERSION:-1.0}"
-BUILD_NUM="${BUILD_NUM:-1}"
+# 版本号走环境变量，发版时 VERSION=1.2 BUILD_NUM=3 ./release.sh 即可，不用改脚本
+VERSION="${VERSION:-1.2}"
+BUILD_NUM="${BUILD_NUM:-3}"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ && "$BUILD_NUM" =~ ^[0-9]+$ ]] || { echo "Invalid VERSION or BUILD_NUM" >&2; exit 1; }
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 
@@ -30,7 +30,7 @@ fi
 
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-SOURCES=(NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
+SOURCES=(NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AgentHooks.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
 # Compile a fixed source snapshot when other development tasks edit the workspace.
 SOURCE_SNAPSHOT="$(mktemp -d /tmp/ailock-build-sources.XXXXXX)"
 trap 'rm -rf "$SOURCE_SNAPSHOT"' EXIT
