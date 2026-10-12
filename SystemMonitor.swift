@@ -245,5 +245,6 @@ func formattedBytes(_ value: UInt64) -> String {
 }
 
 func formattedRate(_ value: UInt64) -> String {
-    "\(formattedBytes(value))/s"
+    if value == 0 { return "0 B/s" }
+    return "\(formattedBytes(value))/s"
 }

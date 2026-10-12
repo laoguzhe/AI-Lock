@@ -30,7 +30,11 @@ final class ResourceAlerts {
         let freeDisk = snapshot.diskTotal > snapshot.diskUsed ? snapshot.diskTotal - snapshot.diskUsed : 0
         if snapshot.diskTotal > 0 && Double(freeDisk) < value("alert.diskGB", fallback: 10) * 1_000_000_000 { active.insert(.disk) }
         if Double(max(snapshot.networkDownload, snapshot.networkUpload)) >= value("alert.networkMB", fallback: 50) * 1_000_000 { active.insert(.network) }
-        if Double(snapshot.swapUsed) >= value("alert.swapGB", fallback: 4) * 1_000_000_000 { active.insert(.swap) }
+        let swapMonitoringEnabled = defaults.object(forKey: "alert.swap.enabled") as? Bool ?? true
+        if swapMonitoringEnabled,
+           Double(snapshot.swapUsed) >= value("alert.swapGB", fallback: 4) * 1_000_000_000 {
+            active.insert(.swap)
+        }
         if snapshot.isOnBattery, let percent = snapshot.batteryPercent,
            Double(percent) <= value("alert.batteryPercent", fallback: 20) { active.insert(.battery) }
         if snapshot.thermalLevel >= Int(value("alert.thermalLevel", fallback: 2)) { active.insert(.thermal) }

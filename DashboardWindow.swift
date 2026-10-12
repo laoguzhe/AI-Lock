@@ -118,7 +118,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         addModule(NSHostingView(rootView: NetworkDiagnosticsView(model: model)))
     }
     private func showProcesses() { let controller = ProcessesModuleController(); processesModule = controller; addModule(controller.view) }
-    private func showNetwork() { let controller = NetworkModuleController(); networkModule = controller; addModule(controller.view) }
+    private func showNetwork() { let controller = NetworkModuleController(); networkModule = controller; addModule(controller.view, verticalInset: 8) }
     private func suspendPageSampling() {
         networkDiagnosticsModel?.cancel()
         processesModule?.stop(); networkModule?.stop(); fileSearch.cancel(); filesModule?.stop()
@@ -220,15 +220,15 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func addModule(_ page: NSView) {
+    private func addModule(_ page: NSView, verticalInset: CGFloat = 20) {
         guard let moduleRoot else { return }
         page.translatesAutoresizingMaskIntoConstraints = false
         moduleRoot.addSubview(page)
         NSLayoutConstraint.activate([
             page.leadingAnchor.constraint(equalTo: moduleRoot.leadingAnchor, constant: 24),
             page.trailingAnchor.constraint(equalTo: moduleRoot.trailingAnchor, constant: -24),
-            page.topAnchor.constraint(equalTo: moduleRoot.topAnchor, constant: 20),
-            page.bottomAnchor.constraint(equalTo: moduleRoot.bottomAnchor, constant: -20)
+            page.topAnchor.constraint(equalTo: moduleRoot.topAnchor, constant: verticalInset),
+            page.bottomAnchor.constraint(equalTo: moduleRoot.bottomAnchor, constant: -verticalInset)
         ])
     }
 
@@ -345,6 +345,9 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     private static var commandRetryTimer: Timer?
     private static let quickActionShortcutEnabledKey = "quickAction.shortcut.customEnabled"
     private static let quickActionShortcutKeyCodeKey = "quickAction.shortcut.keyCode"
+    private static let screenRecorderShortcutKeyCodeKey = "screenRecorder.shortcut.keyCode"
+    private static let screenRecorderShortcutModifiersKey = "screenRecorder.shortcut.modifiers"
+    private static let screenRecorderShortcutEnabledKey = "screenRecorder.shortcut.enabled"
     private static let quickActionShortcutModifiersKey = "quickAction.shortcut.modifiers"
 
     static var quickActionShortcutTitle: String {
@@ -352,6 +355,35 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         let modifiers = UserDefaults.standard.integer(forKey: quickActionShortcutModifiersKey)
         let keyCode = UInt16(clamping: UserDefaults.standard.integer(forKey: quickActionShortcutKeyCodeKey))
         return shortcutModifierTitle(modifiers) + shortcutKeyTitle(keyCode: keyCode, fallback: "?")
+    }
+
+    static var screenRecorderShortcutTitle: String {
+        let defaults = UserDefaults.standard
+        let modifiers = defaults.object(forKey: screenRecorderShortcutModifiersKey) == nil
+            ? (1 | 8)
+            : defaults.integer(forKey: screenRecorderShortcutModifiersKey)
+        let keyCode = defaults.object(forKey: screenRecorderShortcutKeyCodeKey) == nil
+            ? Int(kVK_ANSI_R)
+            : defaults.integer(forKey: screenRecorderShortcutKeyCodeKey)
+        return shortcutModifierTitle(modifiers) + shortcutKeyTitle(keyCode: UInt16(clamping: keyCode), fallback: "R")
+    }
+
+    static func saveScreenRecorderShortcut(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        let flags = modifiers.intersection(.deviceIndependentFlagsMask)
+        var mask = 0
+        if flags.contains(.command) { mask |= 1 }
+        if flags.contains(.option) { mask |= 2 }
+        if flags.contains(.control) { mask |= 4 }
+        if flags.contains(.shift) { mask |= 8 }
+        UserDefaults.standard.set(Int(keyCode), forKey: screenRecorderShortcutKeyCodeKey)
+        UserDefaults.standard.set(mask, forKey: screenRecorderShortcutModifiersKey)
+        UserDefaults.standard.set(true, forKey: screenRecorderShortcutEnabledKey)
+    }
+
+    static func resetScreenRecorderShortcut() {
+        UserDefaults.standard.removeObject(forKey: screenRecorderShortcutEnabledKey)
+        UserDefaults.standard.removeObject(forKey: screenRecorderShortcutKeyCodeKey)
+        UserDefaults.standard.removeObject(forKey: screenRecorderShortcutModifiersKey)
     }
 
     static var hasCustomQuickActionShortcut: Bool {
@@ -441,7 +473,14 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
 
     private static func matchesScreenRecorderShortcut(keyCode: Int64, modifiers: Int) -> Bool {
-        keyCode == Int64(kVK_ANSI_R) && modifiers == (1 | 8)
+        let defaults = UserDefaults.standard
+        let expectedKeyCode = defaults.object(forKey: screenRecorderShortcutKeyCodeKey) == nil
+            ? Int64(kVK_ANSI_R)
+            : Int64(defaults.integer(forKey: screenRecorderShortcutKeyCodeKey))
+        let expectedModifiers = defaults.object(forKey: screenRecorderShortcutModifiersKey) == nil
+            ? (1 | 8)
+            : defaults.integer(forKey: screenRecorderShortcutModifiersKey)
+        return keyCode == expectedKeyCode && modifiers == expectedModifiers
     }
 
     private static func triggerCustomQuickActionShortcut() {
@@ -467,7 +506,9 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             commandLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
                 // Session taps do not reliably deliver events aimed at this application.
                 if commandEventTap == nil {
-                    if event.type == .keyDown,
+                    if event.type == .keyDown, event.keyCode == UInt16(kVK_Escape) {
+                        DisplayPrivacyManager.shared.cancelBlackoutTest()
+                    } else if event.type == .keyDown,
                        !event.isARepeat,
                        matchesQuickActionShortcut(keyCode: Int64(event.keyCode), modifiers: eventModifierMask(event.modifierFlags)) {
                         triggerCustomQuickActionShortcut()
@@ -522,6 +563,10 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         let otherKey = type == .keyDown || !event.flags.intersection(otherFlags).isEmpty || !isCommandKey
         let timestamp = Double(event.timestamp) / 1_000_000_000
         DispatchQueue.main.async {
+            if type == .keyDown, keyCode == Int64(kVK_Escape) {
+                DisplayPrivacyManager.shared.cancelBlackoutTest()
+                return
+            }
             if type == .keyDown,
                event.getIntegerValueField(.keyboardEventAutorepeat) == 0,
                matchesQuickActionShortcut(keyCode: keyCode, modifiers: eventModifierMask(event.flags)) {
@@ -715,7 +760,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             self.searchDataSource?.results = results
             self.searchResultsTable?.reloadData()
             self.quickSearchStatus?.stringValue = self.fileSearch.requiresFullDiskAccess
-                ? L10n.text("文件搜索需要完全磁盘访问：点击“磁盘访问权限”，添加 AI Lock 并开启后重启程序。")
+                ? L10n.text("当前程序的文件访问被系统拦截") + " · " + SearchDiskAccess.permissionDetail
                 : L10n.format("找到 %{0} 个结果 · 正在搜索索引与本地目录（忽略大小写）", arguments: [String(results.count)])
         }
     }
@@ -788,10 +833,8 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         alertCpuField = cpu.1; alertMemoryField = memory.1; alertDiskField = disk.1; alertNetworkField = network.1
         alertSwapField = swap.1; alertBatteryField = battery.1; alertThermalField = thermal.1
         let save = toolbarButton("保存阈值", symbol: "checkmark", action: #selector(saveAlertSettings(_:)))
-        let text = label("预警时菜单栏数值显示白字红底预警标记，底色轻微闪烁，图标保持原色，恢复正常后停止。内存使用量或 macOS 内存压力均可触发。", size: 13, color: muted)
-        text.font = .systemFont(ofSize: 13)
         let test = toolbarButton("测试预警", symbol: "bell", action: #selector(sendTestNotification(_:)))
-        [cpu.0, memory.0, disk.0, network.0, swap.0, battery.0, thermal.0, save, test, text, retentionLabel, clipboardRetention].forEach(page.addSubview)
+        [cpu.0, memory.0, disk.0, network.0, swap.0, battery.0, thermal.0, save, test, retentionLabel, clipboardRetention].forEach(page.addSubview)
         NSLayoutConstraint.activate([
             page.heightAnchor.constraint(greaterThanOrEqualToConstant: 510),
             cpu.0.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), cpu.0.topAnchor.constraint(equalTo: page.topAnchor, constant: 12),
@@ -803,8 +846,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             thermal.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), thermal.0.topAnchor.constraint(equalTo: battery.0.bottomAnchor, constant: 12),
             save.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), save.topAnchor.constraint(equalTo: thermal.0.bottomAnchor, constant: 14),
             test.leadingAnchor.constraint(equalTo: save.trailingAnchor, constant: 12), test.centerYAnchor.constraint(equalTo: save.centerYAnchor),
-            text.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), text.topAnchor.constraint(equalTo: save.bottomAnchor, constant: 12), text.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10),
-            retentionLabel.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), retentionLabel.topAnchor.constraint(equalTo: text.bottomAnchor, constant: 20),
+            retentionLabel.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), retentionLabel.topAnchor.constraint(equalTo: save.bottomAnchor, constant: 20),
             clipboardRetention.leadingAnchor.constraint(equalTo: retentionLabel.trailingAnchor, constant: 12), clipboardRetention.centerYAnchor.constraint(equalTo: retentionLabel.centerYAnchor)
         ])
         addModule(page)
@@ -855,11 +897,29 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             let applications = ApplicationUninstaller.scan()
             let startup = StartupItemInspector.scan()
             let systemCaches = MacHealthModel.measure(URL(fileURLWithPath: "/Library/Caches"))
+            let systemLibraryCachePath = URL(fileURLWithPath: "/System/Library/Caches", isDirectory: true)
+            let systemLibraryCaches = MacHealthModel.measure(systemLibraryCachePath)
+            let systemLibraryPath = URL(fileURLWithPath: "/System/Library", isDirectory: true)
+            let systemLibrary = MacHealthModel.measure(systemLibraryPath, excludingPaths: [systemLibraryCachePath.path])
+            let systemApplications = MacHealthModel.measure(URL(fileURLWithPath: "/System/Applications", isDirectory: true))
+            let systemStorage = (bytes: systemLibrary.bytes + systemApplications.bytes,
+                                 incomplete: systemLibrary.incomplete || systemApplications.incomplete)
+            let userLibraryPath = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library", isDirectory: true)
+            let userLibraryStorage = MacHealthModel.measure(
+                userLibraryPath,
+                excludingPaths: [userLibraryPath.appendingPathComponent("Caches", isDirectory: true).path]
+            )
+            var systemCacheEntries: [CacheEntry] = []
+            CacheCleaner.scanBatches(isSystem: true) { batch, _ in systemCacheEntries.append(contentsOf: batch) }
             DispatchQueue.main.async {
                 guard let self, generation == self.cacheScanGeneration else { return }
                 self.healthModel.applications = applications
                 self.healthModel.startup = startup
                 self.healthModel.systemCaches = systemCaches
+                self.healthModel.systemLibraryCaches = systemLibraryCaches
+                self.healthModel.systemStorage = systemStorage
+                self.healthModel.userLibraryStorage = userLibraryStorage
+                self.healthModel.systemCacheEntries = systemCacheEntries.sorted { $0.size > $1.size }
                 self.healthModel.phase = "正在分析用户缓存…"
             }
             CacheCleaner.scanBatches { batch, isComplete in
@@ -922,7 +982,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
         let status = label("正在扫描启动项和后台常驻配置…", size: 11, color: muted)
         let refresh = toolbarButton("重新扫描", symbol: "arrow.clockwise", action: #selector(refreshLaunchItems(_:)))
-        let table = NSTableView(); table.rowHeight = 34; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        let table = NSTableView(); table.rowHeight = 40; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         for (id, title, width): (String, String, CGFloat) in [("label", "项目", 210), ("kind", "来源", 170), ("enabled", "启动状态", 100), ("program", "程序路径", 520)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = L10n.text(title); column.width = width; table.addTableColumn(column)
         }
@@ -1001,13 +1061,19 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: L10n.text("移入废纸篓"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertSecondButtonReturn else { return }
-            NSWorkspace.shared.recycle([item.url]) { _, error in
+            NSWorkspace.shared.recycle([item.url]) { _, recycleError in
+                let result: Error?
+                if let recycleError {
+                    result = Self.deleteStartupItemWithFinder(item.url) ?? recycleError
+                } else {
+                    result = nil
+                }
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    if let error {
+                    if let result {
                         let failure = NSAlert()
                         failure.messageText = L10n.text("启动项未删除")
-                        failure.informativeText = L10n.text(error.localizedDescription)
+                        failure.informativeText = L10n.text(result.localizedDescription)
                         failure.beginSheetModal(for: window)
                     } else {
                         self.refreshLaunchItems(nil)
@@ -1015,6 +1081,29 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    /// Finder can request administrator authorization when the current process
+    /// cannot move a LaunchAgent plist to the user's Trash itself.
+    private static func deleteStartupItemWithFinder(_ url: URL) -> Error? {
+        let escapedPath = url.path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = NSAppleScript(source: "tell application \"Finder\" to delete POSIX file \"\(escapedPath)\"")
+        guard let script else {
+            return NSError(domain: "StartupItemDeletion", code: 1,
+                           userInfo: [NSLocalizedDescriptionKey: "无法请求 Finder 删除此启动项。请在 Finder 中手动移入废纸篓，并按提示授权。"])
+        }
+        var scriptError: NSDictionary?
+        _ = script.executeAndReturnError(&scriptError)
+        if scriptError == nil { return nil }
+        guard let scriptError else {
+            return NSError(domain: "StartupItemDeletion", code: 1,
+                           userInfo: [NSLocalizedDescriptionKey: "Finder 未能完成删除。请在 Finder 中手动移入废纸篓，并按提示授权。"])
+        }
+        let message = scriptError[NSAppleScript.errorMessage] as? String ?? "Finder 无法删除此启动项。请在 Finder 中手动移入废纸篓，并按提示授权。"
+        return NSError(domain: "StartupItemDeletion", code: scriptError[NSAppleScript.errorNumber] as? Int ?? 1,
+                       userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private let uninstallerModel = ApplicationUninstallerModel()
@@ -1326,6 +1415,7 @@ struct DashboardOverviewView: View {
     @State private var diskAlertThreshold = AppSettings.shared.alerts.diskGB
     @State private var networkAlertThreshold = AppSettings.shared.alerts.networkMB
     @State private var swapAlertThreshold = AppSettings.shared.alerts.swapGB
+    @AppStorage("alert.swap.enabled") private var swapMonitoringEnabled = true
     @State private var batteryAlertThreshold = AppSettings.shared.alerts.batteryPercent
     @State private var thermalAlertThreshold = AppSettings.shared.alerts.thermalLevel
     private var statusMetrics: Set<String> {
@@ -1424,7 +1514,7 @@ struct DashboardOverviewView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if searchNeedsDiskAccess {
                         Button(action: SearchDiskAccess.openSettings) {
-                            Label(L10n.text(english ? "Enable Full Disk Access to search files" : L10n.text("开启完全磁盘访问以搜索文件和文件夹")), systemImage: "externaldrive")
+                            Label(L10n.text("当前程序的文件访问被系统拦截"), systemImage: "externaldrive")
                                 .font(.system(size: scaledFontSize - 1))
                         }.buttonStyle(.plain)
                     }
@@ -1582,14 +1672,13 @@ struct DashboardOverviewView: View {
                     thresholdRow(english ? "Memory usage threshold" : "内存使用量预警阈值", unit: "%", value: $memoryAlertThreshold)
                     thresholdRow(english ? "Free disk threshold" : "磁盘可用空间阈值", unit: "GB", value: $diskAlertThreshold)
                     thresholdRow(english ? "Network rate threshold" : "网络速率阈值", unit: "MB/s", value: $networkAlertThreshold)
+                    Toggle(L10n.text(english ? "Monitor swap usage" : "监视交换内存预警"), isOn: $swapMonitoringEnabled)
                     thresholdRow(english ? "Swap usage threshold" : "交换内存占用阈值", unit: "GB", value: $swapAlertThreshold)
                     thresholdRow(english ? "Low battery (on battery power)" : "低电量阈值（仅电池供电）", unit: "%", value: $batteryAlertThreshold)
                     Picker(L10n.text(english ? "Thermal pressure" : L10n.text("系统热压力预警")), selection: $thermalAlertThreshold) {
                         Text(L10n.text(english ? "Serious or higher" : L10n.text("偏高及以上"))).tag(2.0)
                         Text(L10n.text(english ? "Critical only" : L10n.text("仅严重"))).tag(3.0)
                     }
-                    Text(L10n.text(english ? "Alerts show white values on a pulsing red badge; icons keep their normal color. Badges clear when recovered. Memory alerts use usage or macOS memory pressure." : L10n.text("预警时菜单栏数值显示白字红底预警标记，底色轻微闪烁，图标保持原色，恢复正常后停止；内存使用量或内存压力均可触发。")))
-                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button(L10n.text(english ? "Save Alert Thresholds" : L10n.text("保存预警阈值"))) { saveAlertThresholds() }
                         Button(L10n.text(english ? "Test Alert" : L10n.text("测试预警"))) { sendTestNotification() }
@@ -1679,7 +1768,7 @@ struct DashboardOverviewView: View {
                 Text(L10n.text(english ? "Use feature icons to open tools. Cache cleaning only clears user app caches after confirmation." : L10n.text("点击功能图标打开对应工具。缓存清理仅清理用户应用缓存，并在操作前要求确认。")))
                 Text(L10n.format("当前版本：%{0}", arguments: [String(describing: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")]))
                 Button(L10n.text(english ? "Check for Updates" : L10n.text("检查新版本"))) { NSWorkspace.shared.open(URL(string: "https://github.com/laoguzhe/AI-Lock/releases")!) }
-                Text(L10n.text("作者邮箱：[邮箱]"))
+                Text(L10n.text("laoguzhe@gmail.com"))
                 HStack { Spacer(); Button(L10n.text(english ? "Done" : L10n.text("完成"))) { showingHelp = false }.keyboardShortcut(.defaultAction) }
             }
             .padding(20).frame(width: 340)
@@ -1917,6 +2006,8 @@ private struct HotkeySettingsView: View {
     @State private var registrationStatus = ""
     @State private var isCapturing = false
     @State private var shortcutTitle = DashboardWindow.quickActionShortcutTitle
+    @State private var recorderShortcutTitle = DashboardWindow.screenRecorderShortcutTitle
+    @State private var isCapturingRecorderShortcut = false
     let english: Bool
 
     var body: some View {
@@ -1947,6 +2038,37 @@ private struct HotkeySettingsView: View {
                     Button(L10n.text(english ? "Reset" : "恢复默认")) {
                         DashboardWindow.resetQuickActionShortcut()
                         shortcutTitle = DashboardWindow.quickActionShortcutTitle
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text(english ? "Screen Recorder" : "录屏工具"))
+                        .font(.system(size: 14, weight: .medium))
+                    Text(L10n.text(english ? "Press the shortcut to start or stop recording." : "按下快捷键即可开始或停止录屏。"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                QuickActionShortcutRecorder(title: isCapturingRecorderShortcut
+                    ? L10n.text(english ? "Press shortcut…" : "按下快捷键…")
+                    : recorderShortcutTitle,
+                    isCapturing: isCapturingRecorderShortcut,
+                    recordingChanged: { isCapturingRecorderShortcut = $0 },
+                    onCapture: { keyCode, modifiers in
+                        DashboardWindow.saveScreenRecorderShortcut(keyCode: keyCode, modifiers: modifiers)
+                        recorderShortcutTitle = DashboardWindow.screenRecorderShortcutTitle
+                        isCapturingRecorderShortcut = false
+                    },
+                    onCancel: { isCapturingRecorderShortcut = false })
+                if UserDefaults.standard.bool(forKey: "screenRecorder.shortcut.enabled") {
+                    Button(L10n.text(english ? "Reset" : "恢复默认")) {
+                        DashboardWindow.resetScreenRecorderShortcut()
+                        recorderShortcutTitle = DashboardWindow.screenRecorderShortcutTitle
                     }
                     .buttonStyle(.plain)
                     .font(.caption)
@@ -2081,6 +2203,7 @@ private struct PreferencesWindowView: View {
     @State private var disk = AppSettings.shared.alerts.diskGB
     @State private var network = AppSettings.shared.alerts.networkMB
     @State private var swap = AppSettings.shared.alerts.swapGB
+    @AppStorage("alert.swap.enabled") private var swapMonitoringEnabled = true
     @State private var battery = AppSettings.shared.alerts.batteryPercent
     @State private var thermal = AppSettings.shared.alerts.thermalLevel
     @AppStorage("alert.camera.enabled") private var cameraMonitoringEnabled = false
@@ -2168,6 +2291,7 @@ private struct PreferencesWindowView: View {
                     metricChoice("cpu", title: L10n.text("CPU"), symbol: "cpu")
                     metricChoice("memory", title: english ? "Memory" : "内存", symbol: "memorychip")
                     metricChoice("disk", title: english ? "Disk" : "硬盘", symbol: "internaldrive")
+                    metricChoice("network", title: english ? "Network" : "网络", symbol: "network")
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             Picker(L10n.text("剪贴板历史保留期限"), selection: $clipboardRetention) { ForEach([1, 3, 7, 14, 30], id: \.self) { Text(L10n.format("保留 %{0} 天", arguments: [String(describing: $0)])).tag($0) } }.onChange(of: clipboardRetention) { _, value in ClipboardHistory.shared.retentionDays = value }
@@ -2178,28 +2302,44 @@ private struct PreferencesWindowView: View {
         case "系统扩展":
             ExtensionSettingsView()
         case "监控预警":
-            Toggle(L10n.text(english ? "Monitor camera use" : "监视摄像头调用"), isOn: $cameraMonitoringEnabled)
-                .onChange(of: cameraMonitoringEnabled) { _, _ in NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
-            Toggle(L10n.text(english ? "Monitor microphone use" : "监视麦克风调用"), isOn: $microphoneMonitoringEnabled)
-                .onChange(of: microphoneMonitoringEnabled) { _, _ in NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
-            Text(L10n.text(english
-                ? "When either device is active, its menu bar indicator will show a warning. macOS reports device activity but does not identify the app using it. AI Lock does not capture audio or video."
-                : "设备活动时，菜单栏会显示对应预警。macOS 提供设备使用状态，但不提供调用程序名称；AI Lock 不采集音频或视频。"))
-                .font(.caption).foregroundStyle(.secondary)
-            thresholdRow("CPU 预警阈值", unit: "%", value: $cpu)
-            thresholdRow("内存使用量预警阈值", unit: "%", value: $memory)
-            thresholdRow("磁盘可用空间阈值", unit: "GB", value: $disk)
-            thresholdRow("网络速率阈值", unit: "MB/s", value: $network)
-            thresholdRow("交换内存占用阈值", unit: "GB", value: $swap)
-            thresholdRow("低电量阈值（仅电池供电）", unit: "%", value: $battery)
-            Picker(L10n.text("系统热压力预警"), selection: $thermal) {
-                Text(L10n.text("偏高及以上")).tag(2.0)
-                Text(L10n.text("仅严重")).tag(3.0)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 24) {
+                    Toggle(isOn: $cameraMonitoringEnabled) {
+                        Label(L10n.text(english ? "Monitor camera use" : "监视摄像头调用"), systemImage: "video.fill")
+                    }
+                        .onChange(of: cameraMonitoringEnabled) { _, _ in NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
+                    Toggle(isOn: $microphoneMonitoringEnabled) {
+                        Label(L10n.text(english ? "Monitor microphone use" : "监视麦克风调用"), systemImage: "mic.fill")
+                    }
+                        .onChange(of: microphoneMonitoringEnabled) { _, _ in NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
+                }
+                Toggle(isOn: $swapMonitoringEnabled) {
+                    Label(L10n.text(english ? "Monitor swap usage" : "监视交换内存预警"), systemImage: "arrow.left.arrow.right")
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), alignment: .leading)], alignment: .leading, spacing: 10) {
+                    thresholdRow("CPU 预警阈值", symbol: "cpu", unit: "%", value: $cpu)
+                    thresholdRow("内存使用量预警阈值", symbol: "memorychip", unit: "%", value: $memory)
+                    thresholdRow("磁盘可用空间阈值", symbol: "internaldrive", unit: "GB", value: $disk)
+                    thresholdRow("网络速率阈值", symbol: "network", unit: "MB/s", value: $network)
+                    thresholdRow("交换内存占用阈值", symbol: "arrow.left.arrow.right", unit: "GB", value: $swap)
+                    thresholdRow("低电量阈值（仅电池供电）", symbol: "battery.25percent", unit: "%", value: $battery)
+                }
+                HStack(spacing: 10) {
+                    Label(L10n.text("系统热压力预警"), systemImage: "thermometer")
+                    Picker(L10n.text("系统热压力预警"), selection: $thermal) {
+                        Text(L10n.text("偏高及以上")).tag(2.0)
+                        Text(L10n.text("仅严重")).tag(3.0)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                HStack {
+                    Button(L10n.text("保存预警阈值")) { notificationStatus = SettingValue.saveThresholds([("alert.cpu", cpu), ("alert.memory", memory), ("alert.diskGB", disk), ("alert.networkMB", network), ("alert.swapGB", swap), ("alert.batteryPercent", battery), ("alert.thermalLevel", thermal)]) ? "阈值已保存" : "阈值无效：CPU/内存/电量 1–100%，磁盘/网络/交换内存 0.1–1000000。" }
+                    Button(L10n.text("测试预警")) { sendTestNotification() }
+                }
+                if !notificationStatus.isEmpty { Text(L10n.text(notificationStatus)).font(.caption).foregroundStyle(.secondary) }
             }
-            Text(L10n.text("交换内存占用高可能伴随卡顿；热压力来自 macOS 系统状态，不是温度读数。低电量仅在未接电源时提示。")).font(.caption).foregroundStyle(.secondary)
-            Text(L10n.text("预警时菜单栏数值显示白字红底预警标记，底色轻微闪烁，图标保持原色，恢复正常后停止；内存使用量或内存压力均可触发。")).font(.caption).foregroundStyle(.secondary)
-            HStack { Button(L10n.text("保存预警阈值")) { notificationStatus = SettingValue.saveThresholds([("alert.cpu", cpu), ("alert.memory", memory), ("alert.diskGB", disk), ("alert.networkMB", network), ("alert.swapGB", swap), ("alert.batteryPercent", battery), ("alert.thermalLevel", thermal)]) ? "阈值已保存" : "阈值无效：CPU/内存/电量 1–100%，磁盘/网络/交换内存 0.1–1000000。" }; Button(L10n.text("测试预警")) { sendTestNotification() } }
-            if !notificationStatus.isEmpty { Text(L10n.text(notificationStatus)).font(.caption).foregroundStyle(.secondary) }
         case "DockLock":
             Text(L10n.text("锁定程序坞在你选择的显示器上。"))
                 .foregroundStyle(.secondary)
@@ -2238,19 +2378,35 @@ private struct PreferencesWindowView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(english
                      ? "Designed to run locally. Monitoring data and clipboard history stay on this Mac. Some capabilities require macOS permissions and can be enabled when needed."
-                     : "AI Lock 面向本机使用：监控数据和剪贴板历史保存在这台 Mac 上。部分功能需要 macOS 权限，可在使用时按需授权。")
+                     : "AI Lock 面向本机使用：所有数据保存在本机，部分功能需要 macOS 权限，可在使用时按需授权。")
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(L10n.text("\(english ? "Version" : L10n.text("版本"))：\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")"))
-                Text(L10n.text(english ? "By the AI Lock developer" : L10n.text("作者：AI Lock 开发者")))
+                Text(L10n.text(english ? "By the AI Lock developer" : L10n.text("laoguzhe@gmail.com")))
                 Link(L10n.text(english ? "Project & Updates" : L10n.text("项目主页与更新")), destination: URL(string: "https://github.com/laoguzhe/AI-Lock")!)
             }
         }
     }
 
     private func metricBinding(_ key: String) -> Binding<Bool> {
-        Binding(get: { statusMetricsRaw.split(separator: ",").contains(Substring(key)) }, set: { enabled in
-            var values = Set(statusMetricsRaw.split(separator: ",").map(String.init)); if enabled { values.insert(key) } else { values.remove(key) }; statusMetricsRaw = values.sorted().joined(separator: ",")
+        Binding(get: {
+            let values = Set(statusMetricsRaw.split(separator: ",").map(String.init))
+            if key == "network" {
+                return values.contains("network") || values.contains("networkUpload") || values.contains("networkDownload")
+            }
+            return values.contains(key)
+        }, set: { enabled in
+            var values = Set(statusMetricsRaw.split(separator: ",").map(String.init))
+            if key == "network" {
+                values.remove("networkUpload")
+                values.remove("networkDownload")
+                if enabled { values.insert("network") } else { values.remove("network") }
+            } else if enabled {
+                values.insert(key)
+            } else {
+                values.remove(key)
+            }
+            statusMetricsRaw = values.sorted().joined(separator: ",")
         })
     }
 
@@ -2282,8 +2438,21 @@ private struct PreferencesWindowView: View {
         })
     }
 
-    private func thresholdRow(_ title: String, unit: String, value: Binding<Double>) -> some View {
-        HStack { Text(L10n.text(title)); Spacer(); TextField("", value: value, format: .number).frame(width: 90); Text(L10n.text(unit)).foregroundStyle(.secondary) }
+    private func thresholdRow(_ title: String, symbol: String, unit: String, value: Binding<Double>) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(L10n.text(title)).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 4)
+            HStack(spacing: 6) {
+                TextField("", value: value, format: .number).frame(width: 68)
+                Text(L10n.text(unit)).foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .leading)
+            }
+            .frame(width: 118, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @State private var notificationStatus = ""
@@ -2341,7 +2510,9 @@ struct ScreenTopologyView: View {
                         .frame(width: max(1, screen.bounds.width * scale - 4), height: max(1, screen.bounds.height * scale - 4))
                         .contentShape(Rectangle())
                     }.buttonStyle(.plain)
-                    .delayedHelp(L10n.text("点击切换黑屏；黑屏后点击该屏幕恢复，⌘⌃⇧Esc 解除全部"))
+                    .delayedHelp(L10n.text(L10n.isEnglish
+                        ? "Click to test a display blackout; click the black screen to restore it. Press Esc to cancel the test, or ⌘⌃⇧Esc to clear all covers."
+                        : "点击测试显示器黑屏；黑屏后点击该屏幕恢复。按 Esc 取消测试，或按 ⌘⌃⇧Esc 解除全部遮罩。"))
                     .accessibilityLabel(L10n.text(screen.name + L10n.text("，点击切换黑屏")))
                     .position(x: originX + (screen.bounds.midX - minX) * scale,
                               y: originY + (screen.bounds.midY - minY) * scale)
@@ -2351,7 +2522,10 @@ struct ScreenTopologyView: View {
             .clipped()
         }.frame(height: 150)
         .onReceive(NotificationCenter.default.publisher(for: .displayPrivacyChanged)) { _ in covered = DashboardWindow.coveredDisplays }
-        Text(L10n.text("点击屏幕图片切换黑屏；黑屏后点击屏幕即可恢复，⌘⌃⇧Esc 解除全部。")).font(.caption).foregroundStyle(.secondary)
+        Text(L10n.text(L10n.isEnglish
+            ? "Click a display image to test a blackout; click the black screen to restore it. Press Esc to cancel the test."
+            : "点击屏幕图片测试黑屏；黑屏后点击屏幕即可恢复。按 Esc 取消测试。"))
+            .font(.caption).foregroundStyle(.secondary)
     }
 
     private func wallpaper(for id: CGDirectDisplayID) -> NSImage? {
@@ -2368,8 +2542,41 @@ extension Notification.Name {
 
 final class DisplayPrivacyCoverView: NSView {
     var restore: (() -> Void)?
+    private let hintLabel = NSTextField(labelWithString: "按 ESC取消黑屏测试")
+    private var hintTimer: Timer?
+    private var remainingHintToggles = 4
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        hintLabel.font = .systemFont(ofSize: 12)
+        hintLabel.textColor = .systemOrange
+        hintLabel.isBezeled = false
+        hintLabel.drawsBackground = false
+        hintLabel.isEditable = false
+        hintLabel.isSelectable = false
+        hintLabel.frame = NSRect(x: 16, y: 10, width: 180, height: 18)
+        addSubview(hintLabel)
+
+        hintTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.hintLabel.isHidden.toggle()
+            self.remainingHintToggles -= 1
+            if self.remainingHintToggles == 0 {
+                self.hintLabel.isHidden = true
+                timer.invalidate()
+                self.hintTimer = nil
+            }
+        }
+    }
+
+    override var isFlipped: Bool { true }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { restore?() }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit { hintTimer?.invalidate() }
 }
 
 private final class DisplayPrivacyCard: NSView {
@@ -2421,6 +2628,7 @@ private final class DisplayPrivacyCard: NSView {
 private final class DisplayPrivacyManager {
     static let shared = DisplayPrivacyManager()
     private var overlays: [CGDirectDisplayID: NSWindow] = [:]
+    private var blackoutTestIDs: Set<CGDirectDisplayID> = []
     var coveredIDs: Set<CGDirectDisplayID> { Set(overlays.keys) }
     private let defaultsKey = "privacyBlackoutDisplays"
     private var screenObserver: NSObjectProtocol?
@@ -2438,6 +2646,7 @@ private final class DisplayPrivacyManager {
 
     func toggle(_ displayID: CGDirectDisplayID) {
         if let window = overlays.removeValue(forKey: displayID) {
+            blackoutTestIDs.remove(displayID)
             window.close()
         } else if let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
@@ -2448,9 +2657,20 @@ private final class DisplayPrivacyManager {
         NotificationCenter.default.post(name: .displayPrivacyChanged, object: nil)
     }
 
+    func cancelBlackoutTest() {
+        guard !blackoutTestIDs.isEmpty else { return }
+        for displayID in blackoutTestIDs {
+            overlays.removeValue(forKey: displayID)?.close()
+        }
+        blackoutTestIDs.removeAll()
+        UserDefaults.standard.set(Array(overlays.keys), forKey: defaultsKey)
+        NotificationCenter.default.post(name: .displayPrivacyChanged, object: nil)
+    }
+
     func clearAll() {
         overlays.values.forEach { $0.close() }
         overlays.removeAll()
+        blackoutTestIDs.removeAll()
         UserDefaults.standard.removeObject(forKey: defaultsKey)
         NotificationCenter.default.post(name: .displayPrivacyChanged, object: nil)
     }
@@ -2494,6 +2714,7 @@ private final class DisplayPrivacyManager {
         panel.isReleasedWhenClosed = false
         panel.setFrame(screen.frame, display: true)
         overlays[displayID] = panel
+        blackoutTestIDs.insert(displayID)
         panel.orderFrontRegardless()
     }
 }
@@ -2747,15 +2968,67 @@ private final class StartupItemDataSource: NSObject, NSTableViewDataSource, NSTa
     }
     var items: [StartupItem]
     private weak var table: NSTableView?
+    private var iconCache: [String: NSImage] = [:]
     init(items: [StartupItem], table: NSTableView) { self.items = items; self.table = table }
     func reload() { table?.reloadData() }
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+
+    private func icon(for item: StartupItem) -> NSImage? {
+        if let cached = iconCache[item.id] { return cached }
+
+        let programURL = URL(fileURLWithPath: item.program)
+        var icon: NSImage?
+        if item.program.hasPrefix("/"), let appURL = programURL.pathComponents
+            .enumerated()
+            .first(where: { $0.element.hasSuffix(".app") })
+            .map({ URL(fileURLWithPath: NSString.path(withComponents: Array(programURL.pathComponents.prefix($0.offset + 1)))) }),
+           FileManager.default.fileExists(atPath: appURL.path) {
+            icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        }
+
+        if icon == nil, !item.label.isEmpty,
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: item.label) {
+            icon = NSWorkspace.shared.icon(forFile: appURL.path)
+        }
+        if icon == nil, item.program.hasPrefix("/"), FileManager.default.fileExists(atPath: item.program) {
+            icon = NSWorkspace.shared.icon(forFile: item.program)
+        }
+
+        if let icon { iconCache[item.id] = icon }
+        return icon
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard items.indices.contains(row), let column = tableColumn?.identifier.rawValue else { return nil }
         let item = items[row]
+        if column == "label" {
+            let cell = NSTableCellView()
+            let imageView = NSImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.imageScaling = .scaleProportionallyDown
+            imageView.image = icon(for: item) ?? NSImage(named: NSImage.applicationIconName)
+            let text = NSTextField(labelWithString: item.label)
+            text.translatesAutoresizingMaskIntoConstraints = false
+            text.font = .systemFont(ofSize: 12)
+            text.lineBreakMode = .byTruncatingTail
+            text.usesSingleLineMode = true
+            cell.addSubview(imageView)
+            cell.addSubview(text)
+            cell.imageView = imageView
+            cell.textField = text
+            NSLayoutConstraint.activate([
+                imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                imageView.widthAnchor.constraint(equalToConstant: 28),
+                imageView.heightAnchor.constraint(equalToConstant: 28),
+                text.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 6),
+                text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+                text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
+            return cell
+        }
         let value: String
         switch column {
-        case "label": value = item.label
         case "kind": value = item.kind
         case "enabled": value = L10n.statusList(item.startupStatus)
         case "program": value = ["未知", "未验证"].contains(item.program) ? L10n.text(item.program) : item.program
@@ -3012,7 +3285,11 @@ private final class MacHealthModel: ObservableObject {
     @Published var applications: [InstalledApplication] = []
     @Published var startup: [StartupItem] = []
     @Published var caches: [CacheEntry] = []
+    @Published var systemCacheEntries: [CacheEntry] = []
     @Published var systemCaches: (bytes: Int64, incomplete: Bool)?
+    @Published var systemLibraryCaches: (bytes: Int64, incomplete: Bool)?
+    @Published var systemStorage: (bytes: Int64, incomplete: Bool)?
+    @Published var userLibraryStorage: (bytes: Int64, incomplete: Bool)?
     @Published var scanning = false
     @Published var phase = "准备检查"
     @Published var checkedAt: Date?
@@ -3021,12 +3298,13 @@ private final class MacHealthModel: ObservableObject {
             ["无法解析", "不存在", "缺少", "未确认", "未读取"].contains { item.startupStatus.contains($0) }
         }
     }
-    static func measure(_ root: URL) -> (bytes: Int64, incomplete: Bool) {
+    static func measure(_ root: URL, excludingPaths: Set<String> = []) -> (bytes: Int64, incomplete: Bool) {
         var incomplete = false
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys), errorHandler: { _, _ in incomplete = true; return true }) else { return (0, true) }
         var bytes: Int64 = 0
         for case let url as URL in walker {
+            if excludingPaths.contains(url.standardizedFileURL.path) { walker.skipDescendants(); continue }
             guard let values = try? url.resourceValues(forKeys: keys) else { incomplete = true; continue }
             if values.isSymbolicLink == true { walker.skipDescendants(); continue }
             if values.isRegularFile == true { bytes += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0) }
@@ -3105,6 +3383,15 @@ private struct FolderUsage: Identifiable {
     var id: String { url.path }
 }
 
+private struct DiskUsageSegment: Identifiable {
+    let id: String
+    let title: String
+    let bytes: Int64
+    let color: Color
+    let start: Double
+    let end: Double
+}
+
 private struct LargeFileEntry: Identifiable {
     let url: URL
     let folderName: String
@@ -3167,13 +3454,15 @@ private struct MacHealthView: View {
     let scan: () -> Void
     let clean: ([CacheEntry]) -> Void
     @State private var selected = Set<URL>()
+    @State private var showingCacheAnalysis = false
     @State private var largeFiles: [LargeFileEntry] = []
     @State private var selectedLargeFileIDs = Set<String>()
     @State private var searchingLargeFiles = false
     @State private var searchedLargeFiles = false
-    @State private var showingLargeFileTrashConfirmation = false
     @State private var largeFileOperationMessage: String?
-    private let columns = [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)]
+    @State private var largeFilesWindowController: NSWindowController?
+    private let folderColors: [Color] = [.blue, .orange, .green, .pink, .cyan, .indigo]
+    private let columns = [GridItem(.adaptive(minimum: 360), spacing: 18, alignment: .top)]
     private func size(_ value: Int64) -> String { CacheCleaner.formattedSize(value) }
     private func folderName(_ name: String) -> String {
         guard L10n.isEnglish else { return name }
@@ -3187,9 +3476,31 @@ private struct MacHealthView: View {
         default: return name
         }
     }
-    private var selectedCaches: [CacheEntry] { model.caches.filter { selected.contains($0.id) } }
+    private var installedApplications: [InstalledApplication] {
+        model.applications.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+    }
     private var automaticInspection: [MachineInspectionItem] { model.inspection.filter { $0.id == "battery" } }
     private var selectedLargeFiles: [LargeFileEntry] { largeFiles.filter { selectedLargeFileIDs.contains($0.id) } }
+    private var userCacheBytes: Int64 { model.caches.reduce(0) { $0 + max(0, $1.size) } }
+    private var systemCacheBytes: Int64 { (model.systemCaches?.bytes ?? 0) + (model.systemLibraryCaches?.bytes ?? 0) }
+    private var thermalReadings: [String] {
+        (model.hardware?.temperature ?? "读取中…").components(separatedBy: " · ")
+            .filter { $0.split(separator: " ").first.map(String.init) != L10n.text("电池") }
+    }
+    private var batteryTemperature: String? {
+        model.hardware?.temperature.components(separatedBy: " · ").first {
+            $0.split(separator: " ").first.map(String.init) == L10n.text("电池")
+        }
+    }
+    private var fanRPMReadings: [String] {
+        guard let fanSpeed = model.hardware?.fanSpeed else { return [L10n.text("读取中…")] }
+        let expression = try? NSRegularExpression(pattern: "[0-9,]+\\s*RPM", options: [.caseInsensitive])
+        let range = NSRange(fanSpeed.startIndex..., in: fanSpeed)
+        let readings = expression?.matches(in: fanSpeed, range: range).compactMap {
+            Range($0.range, in: fanSpeed).map { String(fanSpeed[$0]).replacingOccurrences(of: " ", with: "") }
+        } ?? []
+        return readings.isEmpty ? [L10n.text("转速不可用")] : readings
+    }
 
     var body: some View {
         let _ = localizationEnglish
@@ -3200,27 +3511,14 @@ private struct MacHealthView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("MAC HEALTH").font(.caption.weight(.semibold)).tracking(2).foregroundStyle(.secondary)
                         Text(L10n.text("让 Mac 保持好状态")).font(.system(size: 28, weight: .bold))
-                        Text(L10n.text(model.phase)).font(.subheadline).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(action: scan) { Label(L10n.text(model.scanning ? L10n.text("检查中…") : L10n.text("重新检查")), systemImage: "arrow.clockwise") }
                         .buttonStyle(.borderedProminent).controlSize(.large).disabled(model.scanning)
                 }
                 if model.scanning { ProgressView().progressViewStyle(.linear) }
-                HStack(spacing: 18) {
-                    Image(systemName: model.scanning ? "stethoscope" : "checkmark.shield.fill")
-                        .font(.system(size: 38)).foregroundStyle(.teal)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(L10n.text(model.scanning ? L10n.text("正在了解这台 Mac") : L10n.text("本机检查概览"))).font(.title3.weight(.semibold))
-                        Text(L10n.text(model.scanning ? L10n.text("硬件 · 存储 · 应用 · 缓存 · 配置") : L10n.format("%{0} 个应用 · %{1} 个启动配置 · %{2} 项配置需要核查", arguments: [String(describing: model.applications.count), String(describing: model.startup.count), String(describing: model.problems.count)])))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if let date = model.checkedAt { Text(date, style: .time).font(.caption).foregroundStyle(.secondary) }
-                }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: 3), spacing: 12) {
-                    panel(model.hardware?.modelName ?? L10n.text("读取中…"), symbol: "laptopcomputer", color: .blue) {
+                HStack(alignment: .top, spacing: 14) {
+                    summaryCard(model.hardware?.modelName ?? L10n.text("读取中…"), symbol: "laptopcomputer", color: .blue) {
                         Text(L10n.format("%{0} · %{1} 核 · %{2} 内存", arguments: [
                             String(describing: model.hardware?.chip ?? "—"),
                             String(describing: model.hardware?.coreCount ?? String(ProcessInfo.processInfo.activeProcessorCount)),
@@ -3240,192 +3538,154 @@ private struct MacHealthView: View {
                                     .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
-                        ForEach(["management", "sip"], id: \.self) { inspectionID in
-                            if let item = model.inspection.first(where: { $0.id == inspectionID }) {
-                                Label(L10n.text(item.value), systemImage: inspectionSymbol(item.status))
-                                    .font(.caption).foregroundStyle(inspectionColor(item.status)).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(["management", "sip"], id: \.self) { inspectionID in
+                                if let item = model.inspection.first(where: { $0.id == inspectionID }) {
+                                    Label(L10n.text(item.value), systemImage: inspectionSymbol(item.status))
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(inspectionColor(item.status))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
                     }
-                    panel("热压力", symbol: "thermometer.medium", color: .orange) {
-                        Text(L10n.text(["正常", "轻度", "较高", "严重"][min(3, max(0, model.snapshot?.thermalLevel ?? 0))]))
-                            .font(.title3.weight(.semibold))
-                        Label(L10n.format("温度：%{0}", arguments: [L10n.statusList(model.hardware?.temperature ?? "读取中…")]), systemImage: "thermometer.medium")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        Label(L10n.format("风扇：%{0}", arguments: [L10n.statusList(model.hardware?.fanSpeed ?? "读取中…")]), systemImage: "fan")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        Divider()
-                        Text(L10n.text("硬件性能测试")).font(.subheadline.weight(.semibold))
+                    summaryCard("热压力 · " + L10n.text((model.snapshot?.thermalLevel ?? 0) == 0 ? "正常" : "异常"), symbol: "thermometer.medium", color: (model.snapshot?.thermalLevel ?? 0) == 0 ? .teal : .orange) {
+                        VStack(alignment: .center, spacing: 7) {
+                            ForEach(Array(thermalReadings.enumerated()), id: \.offset) { _, value in
+                                Text(L10n.statusList(value)).font(.system(size: 14, weight: .regular)).monospacedDigit()
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            }
+                        }
+                        ForEach(Array(fanRPMReadings.enumerated()), id: \.offset) { _, rpm in
+                            Text(rpm).font(.system(size: 14, weight: .medium)).monospacedDigit()
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                    }
+                    summaryCard("", symbol: nil, color: .purple) {
+                        ForEach(Array(NSScreen.screens.enumerated()), id: \.offset) { _, screen in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "display").font(.system(size: 18)).foregroundStyle(.purple)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(screen.localizedName).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                                    if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+                                        Text("\(CGDisplayPixelsWide(number.uint32Value)) × \(CGDisplayPixelsHigh(number.uint32Value))")
+                                            .font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    summaryCard("电池", symbol: "battery.100percent", color: .teal) {
+                        ForEach(automaticInspection) { item in
+                            Text(L10n.text(item.value))
+                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(inspectionColor(item.status))
+                            ForEach(Array(item.detail.components(separatedBy: " · ").enumerated()), id: \.offset) { _, metric in
+                                Text(L10n.text(metric))
+                                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let batteryTemperature {
+                                Text(L10n.statusList(batteryTemperature))
+                                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                            }
+                        }
+                        if automaticInspection.isEmpty {
+                            Text(L10n.text("读取中…")).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                panel("硬件性能测试", symbol: "speedometer", color: .orange) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 16)], alignment: .leading, spacing: 16) {
                         ForEach(HardwareBenchmark.allCases) { kind in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: kind.symbol).foregroundStyle(.orange)
-                                    Text(L10n.text(kind.title)).font(.caption.weight(.medium))
-                                    Spacer()
-                                    if benchmarks.running { ProgressView().controlSize(.small) }
-                                }
-                                if let result = benchmarks.results[kind], !result.isEmpty {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        ForEach(Array(result.filter { $0.0 != "校验值" }.enumerated()), id: \.offset) { _, measurement in
-                                            HStack(spacing: 4) {
-                                                Text(L10n.text(measurement.0)).lineLimit(1)
-                                                Spacer(minLength: 2)
-                                                Text(measurement.1).monospacedDigit().lineLimit(1)
-                                            }.font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                } else if let message = benchmarks.messages[kind], message != "测试中…" {
-                                    Text(L10n.text(message)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                }
-                            }
+                            benchmarkSummary(kind)
+                                .padding(14)
+                                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
                         }
-                        Text(L10n.text("首次打开系统健康检查时自动运行一次硬盘与内存测试，结果受缓存和其他负载影响。"))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                    panel("显示器", symbol: "display", color: .purple) {
-                        Text(L10n.statusList(model.hardware?.displaySummary ?? "读取中…"))
-                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
-                    }
-                    Color.clear.frame(height: 0).accessibilityHidden(true)
-                    Color.clear.frame(height: 0).accessibilityHidden(true)
-                    panel("自动验机", symbol: "checkmark.shield.fill", color: .teal) {
-                        HStack {
-                            Text(L10n.text("自动检查")).font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text(L10n.format("自动检查 %{0} 项", arguments: [String(describing: automaticInspection.count)]))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
-                            ForEach(automaticInspection) { item in
-                                HStack(alignment: .top, spacing: 7) {
-                                    Image(systemName: inspectionSymbol(item.status))
-                                        .font(.caption).foregroundStyle(inspectionColor(item.status)).frame(width: 14)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(spacing: 4) {
-                                            Text(L10n.text(item.title)).font(.caption.weight(.semibold))
-                                            Spacer(minLength: 4)
-                                            Text(L10n.text(item.value)).font(.caption2.weight(.medium)).multilineTextAlignment(.trailing).lineLimit(1)
-                                        }
-                                        Text(L10n.text(item.detail)).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }
-                                .padding(9).frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
-                                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                                .help(L10n.text(item.detail))
-                            }
-                        }
-                        Text(L10n.text("键盘、屏幕、摄像头/麦克风和接口需现场交互确认。"))
-                            .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 LazyVGrid(columns: columns, spacing: 18) {
-                    panel("磁盘空间", symbol: "internaldrive.fill", color: .purple) {
+                    panel("磁盘空间", symbol: "internaldrive.fill", color: .purple,
+                          headerTrailing: model.inspection.filter { $0.id == "storage" || $0.id == "filevault" }) {
                         if let s = model.snapshot, s.diskTotal > 0 {
-                            HStack(spacing: 24) {
+                            let total = max(1, s.diskTotal)
+                            let used = min(max(0, s.diskUsed), total)
+                            let segments = diskUsageSegments(total: total, used: used)
+                            HStack(spacing: 18) {
                                 ZStack {
-                                    Circle().stroke(.purple.opacity(0.12), lineWidth: 12)
-                                    Circle().trim(from: 0, to: CGFloat(s.diskUsed) / CGFloat(s.diskTotal)).stroke(.purple, style: StrokeStyle(lineWidth: 12, lineCap: .round)).rotationEffect(.degrees(-90))
-                                    Text(L10n.format("%{0}%\n已使用", arguments: [String(describing: Int(Double(s.diskUsed) / Double(s.diskTotal) * 100))])).font(.headline).multilineTextAlignment(.center)
+                                    Circle().stroke(.purple.opacity(0.10), lineWidth: 12)
+                                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                                        Circle().trim(from: segment.start, to: segment.end)
+                                            .stroke(segment.color, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                                            .rotationEffect(.degrees(-90))
+                                    }
+                                    Text(L10n.format("%{0}%\n已使用", arguments: [String(describing: Int(Double(used) / Double(total) * 100))])).font(.headline).multilineTextAlignment(.center)
                                 }.frame(width: 108, height: 108)
                                 VStack(alignment: .leading, spacing: 9) {
-                                    Text(size(Int64(s.diskTotal - s.diskUsed))).font(.title2.weight(.semibold))
-                                    Text(L10n.format("可用 / 共 %{0}", arguments: [String(describing: size(Int64(s.diskTotal)))])).foregroundStyle(.secondary)
-                                    Text(L10n.text(Double(s.diskTotal - s.diskUsed) / Double(s.diskTotal) < 0.1 ? L10n.text("空间偏低，建议检查大文件") : L10n.text("空间充足"))).foregroundStyle(Double(s.diskTotal - s.diskUsed) / Double(s.diskTotal) < 0.1 ? .orange : .teal)
+                                    Text(size(Int64(total - used))).font(.title2.weight(.semibold))
+                                    Text(L10n.format("可用 / 共 %{0}", arguments: [String(describing: size(Int64(total)))] )).foregroundStyle(.secondary)
+                                    Text(L10n.text(Double(total - used) / Double(total) < 0.1 ? L10n.text("空间偏低，建议检查大文件") : L10n.text("空间充足"))).foregroundStyle(Double(total - used) / Double(total) < 0.1 ? .orange : .teal)
                                 }
                             }
-                        } else { Text(L10n.text("磁盘容量尚未读取")).foregroundStyle(.secondary) }
-                        Divider()
-                        ForEach(["storage", "filevault"], id: \.self) { inspectionID in
-                            if let item = model.inspection.first(where: { $0.id == inspectionID }) {
-                                Label(L10n.text(item.value), systemImage: inspectionSymbol(item.status))
-                                    .font(.caption.weight(.medium)).foregroundStyle(inspectionColor(item.status))
-                            }
-                        }
-                        if !model.userFolders.isEmpty {
-                            Text(L10n.text("常用用户文件夹占用")).font(.subheadline.weight(.semibold))
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), alignment: .leading, spacing: 8) {
-                                ForEach(model.userFolders) { folder in
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), alignment: .leading), count: 3), alignment: .leading, spacing: 6) {
+                                ForEach(segments) { segment in
                                     HStack(spacing: 4) {
-                                        Text(folderName(folder.name)).lineLimit(1)
-                                        Spacer(minLength: 2)
-                                        Text(size(folder.bytes)).monospacedDigit().lineLimit(1)
-                                    }.font(.caption).foregroundStyle(.secondary)
-                                        .help(folder.incomplete ? L10n.text("部分目录不可读取，占用不完整") : folder.url.path)
+                                        Circle().fill(segment.color).frame(width: 7, height: 7)
+                                        Text(L10n.text(segment.title)).lineLimit(1)
+                                        Spacer(minLength: 1)
+                                        Text(size(segment.bytes)).monospacedDigit().lineLimit(1)
+                                    }
+                                    .font(.system(size: 10)).foregroundStyle(.secondary)
                                 }
                             }
+                            Text(L10n.text("分项之和与磁盘已用总量一致；其他包含未分类文件、系统快照和文件系统开销。"))
+                                .font(.system(size: 9)).foregroundStyle(.tertiary).lineLimit(2)
                         } else {
-                            Text(L10n.text("常用用户文件夹占用尚未读取")).font(.caption).foregroundStyle(.secondary)
+                            Text(L10n.text("磁盘容量尚未读取")).foregroundStyle(.secondary)
                         }
                         Divider()
                         HStack {
-                            Button {
-                                findLargeFiles()
-                            } label: {
-                                Label(L10n.text(searchingLargeFiles ? "查找中…" : "查找大文件"), systemImage: "doc.text.magnifyingglass")
-                            }.buttonStyle(.bordered).disabled(searchingLargeFiles || model.scanning)
                             Spacer()
-                            if searchingLargeFiles { ProgressView().controlSize(.small) }
-                            else if searchedLargeFiles {
-                                Text(L10n.format("找到 %{0} 个大文件（≥ %{1}）", arguments: [String(largeFiles.count), size(100 * 1024 * 1024)]))
-                                    .font(.caption).foregroundStyle(.secondary)
+                            Button(action: openLargeFilesWindow) {
+                                Label(L10n.text("查找大文件"), systemImage: "doc.text.magnifyingglass")
                             }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(.purple)
+                            .disabled(searchingLargeFiles || model.scanning)
                         }
-                        Text(L10n.text("扫描桌面、文稿、下载、影片、音乐和图片目录中的 100 MB 以上文件。"))
-                            .font(.caption2).foregroundStyle(.secondary)
-                        if searchedLargeFiles {
-                            if largeFiles.isEmpty {
-                                Text(L10n.text("未找到 100 MB 以上的大文件")).font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                ScrollView {
-                                    LazyVStack(alignment: .leading, spacing: 2) {
-                                        ForEach(largeFiles) { file in
-                                            Button {
-                                                if selectedLargeFileIDs.contains(file.id) { selectedLargeFileIDs.remove(file.id) }
-                                                else { selectedLargeFileIDs.insert(file.id) }
-                                            } label: {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: selectedLargeFileIDs.contains(file.id) ? "checkmark.circle.fill" : "circle")
-                                                        .foregroundStyle(selectedLargeFileIDs.contains(file.id) ? .teal : .secondary)
-                                                    VStack(alignment: .leading, spacing: 2) {
-                                                        Text(file.url.lastPathComponent).lineLimit(1)
-                                                        Text("\(folderName(file.folderName)) · \(size(file.allocatedSize))")
-                                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                                    }
-                                                    Spacer(minLength: 4)
-                                                }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 5)
-                                            }.buttonStyle(.plain).help(file.url.path)
-                                        }
-                                    }
-                                }.frame(maxHeight: 240)
-                                HStack {
-                                    Button(L10n.text("在 Finder 中显示")) {
-                                        NSWorkspace.shared.activateFileViewerSelecting(selectedLargeFiles.map(\.url))
-                                    }.buttonStyle(.bordered).disabled(selectedLargeFiles.isEmpty)
-                                    Spacer()
-                                    Button(L10n.format("移入废纸篓（%{0}）", arguments: [String(selectedLargeFiles.count)])) {
-                                        showingLargeFileTrashConfirmation = true
-                                    }.buttonStyle(.borderedProminent).disabled(selectedLargeFiles.isEmpty || searchingLargeFiles)
+                    }
+                    .frame(height: 360, alignment: .topLeading)
+                    panel("应用分析", symbol: "square.stack.3d.up.fill", color: .indigo,
+                          headerAction: AnyView(
+                            Button { _ = DashboardWindow.open(.uninstaller) } label: {
+                                Label(L10n.text("管理已安装应用"), systemImage: "square.grid.2x2")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(.indigo)
+                          )) {
+                        HStack(spacing: 12) {
+                            Text(L10n.format("%{0} 个应用", arguments: [String(describing: installedApplications.count)]))
+                                .font(.title2.weight(.semibold))
+                            Text(L10n.format("占用 %{0} 空间", arguments: [String(describing: size(installedApplications.reduce(0) { $0 + $1.size }))]))
+                                .foregroundStyle(.secondary)
+                        }
+                        ScrollView(.vertical) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
+                                ForEach(installedApplications.sorted { $0.size > $1.size }) { app in
+                                    VStack(spacing: 5) {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 40, height: 40)
+                                        Text(app.name).font(.caption).lineLimit(1)
+                                        Text(size(app.size)).font(.caption2).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity).help("\(app.name) · \(app.url.path)")
                                 }
                             }
                         }
-                        if let largeFileOperationMessage {
-                            Text(L10n.text(largeFileOperationMessage)).font(.caption).foregroundStyle(.secondary)
-                        }
+                        .frame(maxHeight: .infinity)
+                        .scrollIndicators(.visible)
                     }
-                    panel("应用分析", symbol: "square.stack.3d.up.fill", color: .indigo) {
-                        Text(L10n.format("%{0} 个应用", arguments: [String(describing: model.applications.count)])).font(.title2.weight(.semibold))
-                        Text(L10n.format("安装占用 %{0} · 用户与第三方应用目录", arguments: [String(describing: size(model.applications.reduce(0) { $0 + $1.size }))])).foregroundStyle(.secondary)
-                        HStack(spacing: 14) {
-                            ForEach(model.applications.sorted { $0.size > $1.size }.prefix(4)) { app in
-                                VStack(spacing: 5) {
-                                    Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 40, height: 40)
-                                    Text(app.name).font(.caption).lineLimit(1)
-                                    Text(size(app.size)).font(.caption2).foregroundStyle(.secondary)
-                                }.frame(maxWidth: .infinity).help(app.url.path)
-                            }
-                        }
-                        Button(L10n.text("管理已安装应用")) { _ = DashboardWindow.open(.uninstaller) }.buttonStyle(.bordered)
-                    }
+                    .frame(height: 305, alignment: .topLeading)
                     panel("启动与配置", symbol: "gearshape.2.fill", color: .orange) {
                         Text(L10n.text(model.scanning ? L10n.text("正在检查配置…") : model.problems.isEmpty ? L10n.text("未发现配置异常") : L10n.format("%{0} 项需要核查", arguments: [String(describing: model.problems.count)]))).font(.title2.weight(.semibold))
                         Text(L10n.format("检查 %{0} 个 LaunchAgent / LaunchDaemon 的格式、程序路径与执行权限。运行状态未知。", arguments: [String(describing: model.startup.count)])).foregroundStyle(.secondary)
@@ -3436,40 +3696,19 @@ private struct MacHealthView: View {
                         }
                         Button(L10n.text("查看启动配置")) { _ = DashboardWindow.open(.launchItems) }.buttonStyle(.bordered)
                     }
-                    panel("用户缓存", symbol: "externaldrive.badge.minus", color: .teal) {
-                        Text(size(model.caches.reduce(0) { $0 + $1.size })).font(.title2.weight(.semibold))
-                        Text(L10n.text("可供清理审核 · 仅 ~/Library/Caches 中可读取的应用目录")).foregroundStyle(.secondary)
-                        Text(L10n.text("选中下方缓存卡片，再审核具体内容。建议先退出对应应用。")).font(.caption).foregroundStyle(.secondary)
-                        Button(L10n.format("审核所选缓存（%{0}）", arguments: [String(describing: selectedCaches.count)])) { clean(selectedCaches) }
-                            .buttonStyle(.borderedProminent).disabled(model.scanning || selectedCaches.isEmpty)
-                    }
-                    panel("系统缓存", symbol: "externaldrive.badge.exclamationmark", color: .pink) {
-                        Text(L10n.text(model.systemCaches.map { size($0.bytes) } ?? L10n.text("分析中…"))).font(.title2.weight(.semibold))
-                        Text(L10n.text("/Library/Caches · \(model.systemCaches?.incomplete == true ? L10n.text("部分目录不可读取，占用不完整") : L10n.text("可访问文件的占用"))")).foregroundStyle(.secondary)
-                        Text(L10n.text("系统管理的 /System 与 /private/var 缓存未纳入扫描。此区域仅分析，不提供自动删除。")).font(.caption).foregroundStyle(.secondary)
-                        Button(L10n.text("在 Finder 中查看")) { NSWorkspace.shared.open(URL(fileURLWithPath: "/Library/Caches")) }.buttonStyle(.bordered)
-                    }
-                }
-                if !model.caches.isEmpty {
-                    Text(L10n.text("缓存空间分析")).font(.title3.weight(.semibold))
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 185))], spacing: 12) {
-                        ForEach(model.caches) { entry in
-                            Button {
-                                if selected.contains(entry.id) { selected.remove(entry.id) } else { selected.insert(entry.id) }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack {
-                                        cacheIcon(entry)
-                                        Spacer()
-                                        Image(systemName: selected.contains(entry.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(entry.id) ? .teal : .secondary)
-                                    }
-                                    Text(cacheName(entry)).font(.subheadline.weight(.medium)).lineLimit(1)
-                                    Text(size(entry.size)).font(.title3.weight(.semibold))
-                                    ProgressView(value: Double(entry.size), total: Double(max(1, model.caches.first?.size ?? 1))).tint(.teal)
-                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(selected.contains(entry.id) ? Color.teal.opacity(0.1) : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected.contains(entry.id) ? Color.teal : Color.primary.opacity(0.07)))
-                            }.buttonStyle(.plain).help(entry.url.path).disabled(model.scanning)
+                    panel("磁盘缓存", symbol: "externaldrive.badge.minus", color: .teal) {
+                        Text(size(userCacheBytes + systemCacheBytes)).font(.title2.weight(.semibold))
+                        HStack(spacing: 14) {
+                            Label(L10n.format("用户缓存 %{0}", arguments: [size(userCacheBytes)]), systemImage: "person.fill")
+                            Label(L10n.format("系统缓存 %{0}", arguments: [model.systemCaches.map { size($0.bytes + (model.systemLibraryCaches?.bytes ?? 0)) } ?? L10n.text("分析中…")]), systemImage: "gearshape.fill")
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.text("缓存分析包含用户缓存和 /Library/Caches。选择要清理的项目后，会逐项验证并移入废纸篓。"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button(L10n.text("清理缓存")) { showingCacheAnalysis = true }
+                                .buttonStyle(.borderedProminent).disabled(model.scanning)
                         }
                     }
                 }
@@ -3477,11 +3716,21 @@ private struct MacHealthView: View {
         }
         .task { benchmarks.startAllIfNeeded() }
         .onChange(of: model.scanning) { _, scanning in if scanning { selected.removeAll() } }
-        .confirmationDialog(L10n.text("将所选大文件移入废纸篓？"), isPresented: $showingLargeFileTrashConfirmation, titleVisibility: .visible) {
-            Button(L10n.text("移入废纸篓"), role: .destructive) { trashSelectedLargeFiles() }
-            Button(L10n.text("取消"), role: .cancel) {}
-        } message: {
-            Text(L10n.format("将 %{0} 个所选文件移入废纸篓，可从废纸篓恢复。", arguments: [String(selectedLargeFiles.count)]))
+        .sheet(isPresented: $showingCacheAnalysis) {
+            CacheAnalysisSheet(
+                userCaches: model.caches,
+                systemCaches: model.systemCacheEntries,
+                systemTotal: model.systemCaches?.bytes,
+                systemIncomplete: model.systemCaches?.incomplete ?? false,
+                selectedIDs: $selected,
+                scanning: model.scanning,
+                name: cacheName,
+                size: size
+            ) { entries in
+                showingCacheAnalysis = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { clean(entries) }
+            }
+            .frame(minWidth: 640, minHeight: 520)
         }
     }
 
@@ -3489,11 +3738,161 @@ private struct MacHealthView: View {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.name) else { return entry.name }
         return FileManager.default.displayName(atPath: url.path)
     }
+    private func diskUsageSegments(total: UInt64, used: UInt64) -> [DiskUsageSegment] {
+        guard total > 0, used > 0 else { return [] }
+
+        var categories: [(id: String, title: String, bytes: Int64, color: Color)] = model.userFolders.enumerated().map { index, folder in
+            ("folder:\(folder.id)", folderName(folder.name), max(0, folder.bytes), folderColors[index % folderColors.count])
+        }
+        let applicationBytes = installedApplications.reduce(Int64(0)) { $0 + max(0, $1.size) }
+        let userLibraryBytes = model.userLibraryStorage?.bytes ?? 0
+        let systemBytes = model.systemStorage?.bytes ?? 0
+        if applicationBytes > 0 { categories.append(("applications", "应用占用", applicationBytes, .indigo)) }
+        if userLibraryBytes > 0 { categories.append(("user-library", "用户资料库", userLibraryBytes, .cyan)) }
+        if userCacheBytes > 0 { categories.append(("user-caches", "用户缓存", userCacheBytes, .mint)) }
+        if systemCacheBytes > 0 { categories.append(("system-caches", "系统缓存", systemCacheBytes, .orange)) }
+        if systemBytes > 0 { categories.append(("system", "macOS 系统占用", systemBytes, .purple)) }
+        categories.removeAll { $0.bytes <= 0 }
+
+        let targetBytes = Int64(min(used, UInt64(Int64.max)))
+        let measuredBytes = categories.reduce(0.0) { $0 + Double($1.bytes) }
+        let scale = measuredBytes > Double(targetBytes) && measuredBytes > 0
+            ? Double(targetBytes) / measuredBytes
+            : 1
+        var normalized = categories.map { Int64((Double($0.bytes) * scale).rounded(.down)) }
+        let normalizedTotal = normalized.reduce(Int64(0), +)
+        if scale < 1, let last = normalized.indices.last {
+            normalized[last] += max(0, targetBytes - normalizedTotal)
+        }
+        let knownBytes = normalized.reduce(Int64(0), +)
+        let otherBytes = max(0, targetBytes - knownBytes)
+
+        var cursor = 0.0
+        var segments: [DiskUsageSegment] = []
+        for (index, category) in categories.enumerated() {
+            let bytes = normalized[index]
+            guard bytes > 0 else { continue }
+            let end = min(Double(used) / Double(total), cursor + Double(bytes) / Double(total))
+            segments.append(DiskUsageSegment(id: category.id, title: category.title, bytes: bytes,
+                                             color: category.color, start: cursor, end: end))
+            cursor = end
+        }
+        if otherBytes > 0 {
+            let end = min(Double(used) / Double(total), cursor + Double(otherBytes) / Double(total))
+            segments.append(DiskUsageSegment(id: "other", title: "其他占用", bytes: otherBytes,
+                                             color: .gray, start: cursor, end: end))
+        }
+        return segments
+    }
+    private func benchmarkSummary(_ kind: HardwareBenchmark) -> some View {
+        let label: String
+        switch kind {
+        case .disk: label = "硬盘"
+        case .memory: label = "内存"
+        case .localAI: label = "本地 AI 估算"
+        }
+        let metrics = (benchmarks.results[kind] ?? []).compactMap { name, value -> (String, String)? in
+            guard name != "校验值" else { return nil }
+            let shortName: String
+            switch name {
+            case "顺序写入", "内存写入": shortName = "写"
+            case "顺序读取": shortName = "读"
+            case "CPU计算": shortName = "CPU 算力"
+            case "GPU设备": shortName = "GPU"
+            case "GPU计算": shortName = "GPU 算力"
+            case "系统内存": shortName = "内存"
+            case "4-bit模型": shortName = "4-bit"
+            case "8-bit模型": shortName = "8-bit"
+            case "FP16模型": shortName = "FP16"
+            default: shortName = "复制"
+            }
+            return (shortName, benchmarkRate(value))
+        }
+        let aiMetrics = metrics.filter { $0.0 == "CPU 算力" || $0.0 == "GPU 算力" }
+        let fp16Estimate = benchmarks.results[kind]?.first { $0.0 == "FP16模型" }?.1
+        let heading: String
+        if kind == .localAI, let fp16Estimate {
+            heading = label + " · FP16 " + L10n.text(fp16Estimate)
+        } else {
+            heading = label
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(L10n.text(heading), systemImage: kind.symbol)
+                .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            if kind == .localAI {
+                if aiMetrics.isEmpty {
+                    if let message = benchmarks.messages[kind], message != "测试中…" {
+                        Text(L10n.text(message)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                } else {
+                    ForEach(Array(aiMetrics.enumerated()), id: \.offset) { _, metric in
+                        HStack(spacing: 2) {
+                            Text(L10n.text(metric.0)).foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text(L10n.text(metric.1)).monospacedDigit().foregroundStyle(.primary)
+                        }
+                        .font(.caption2).lineLimit(1)
+                    }
+                }
+            } else if metrics.isEmpty {
+                if let message = benchmarks.messages[kind], message != "测试中…" {
+                    Text(L10n.text(message)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            } else {
+                ForEach(Array(metrics.enumerated()), id: \.offset) { _, metric in
+                    HStack(spacing: 2) {
+                        Text(L10n.text(metric.0)).foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(L10n.text(metric.1)).monospacedDigit().foregroundStyle(.primary)
+                    }
+                    .font(.caption2).lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func benchmarkRate(_ value: String) -> String {
+        guard let megabytesPerSecond = Double(value.replacingOccurrences(of: " MB/s", with: "")) else { return value }
+        if megabytesPerSecond >= 1_000 {
+            return String(format: "%.1f GB/s", megabytesPerSecond / 1_000)
+        }
+        return String(format: "%.0f MB/s", megabytesPerSecond)
+    }
     private func coverageURL(serialNumber: String) -> URL? {
         var components = URLComponents(string: "https://checkcoverage.apple.com/")
         components?.queryItems = [URLQueryItem(name: "locale", value: "zh_CN"), URLQueryItem(name: "sn", value: serialNumber)]
         return components?.url
     }
+    private func openLargeFilesWindow() {
+        if let window = largeFilesWindowController?.window {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let rootView = LargeFilesWindowView(
+            files: $largeFiles,
+            selectedIDs: $selectedLargeFileIDs,
+            searching: $searchingLargeFiles,
+            searched: $searchedLargeFiles,
+            operationMessage: $largeFileOperationMessage,
+            scan: findLargeFiles,
+            trash: trashSelectedLargeFiles,
+            folderName: folderName,
+            size: size
+        )
+        let controller = LargeFilesWindowController(rootView: rootView)
+        largeFilesWindowController = controller
+        controller.showWindow(nil)
+        controller.window?.center()
+        NSApp.activate(ignoringOtherApps: true)
+        findLargeFiles()
+    }
+
     private func findLargeFiles() {
         guard !searchingLargeFiles else { return }
         searchingLargeFiles = true
@@ -3554,14 +3953,6 @@ private struct MacHealthView: View {
         }
         return true
     }
-    @ViewBuilder private func cacheIcon(_ entry: CacheEntry) -> some View {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.name) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 30, height: 30)
-        } else {
-            Image(systemName: "archivebox.fill").font(.title2).foregroundStyle(.teal)
-        }
-    }
-
     private func metric(_ title: String, value: String, symbol: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(L10n.text(title), systemImage: symbol).font(.caption).foregroundStyle(.secondary)
@@ -3583,18 +3974,322 @@ private struct MacHealthView: View {
         case .informational, .unavailable: return .secondary
         }
     }
-    private func panel<Content: View>(_ title: String, symbol: String, color: Color, @ViewBuilder content: () -> Content) -> some View {
+    private func summaryCard<Content: View>(_ title: String, symbol: String?, color: Color, @ViewBuilder content: @escaping () -> Content) -> some View {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 12) {
+                if !title.isEmpty {
+                    HStack(spacing: 8) {
+                        if let symbol {
+                            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(color)
+                                .frame(width: 30, height: 30).background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                        }
+                        Text(L10n.text(title)).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                    }
+                }
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 10) { content() }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(14)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.primary.opacity(0.08)))
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func panel<Content: View>(_ title: String, symbol: String, color: Color,
+                                      headerTrailing: [MachineInspectionItem] = [],
+                                      headerAction: AnyView? = nil,
+                                      @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.system(size: 18, weight: .semibold)).foregroundStyle(color)
                     .frame(width: 38, height: 38).background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
                 Text(L10n.text(title)).font(.headline)
+                ForEach(headerTrailing) { item in
+                    Label(L10n.text(item.value), systemImage: inspectionSymbol(item.status))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(inspectionColor(item.status))
+                        .lineLimit(1)
+                        .help(L10n.text(item.detail))
+                }
                 Spacer()
+                if let headerAction { headerAction }
             }
             content()
-        }.padding(20).frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+        }.padding(20).frame(minWidth: 0, maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
+    }
+}
+
+private struct CacheAnalysisSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let userCaches: [CacheEntry]
+    let systemCaches: [CacheEntry]
+    let systemTotal: Int64?
+    let systemIncomplete: Bool
+    @Binding var selectedIDs: Set<URL>
+    let scanning: Bool
+    let name: (CacheEntry) -> String
+    let size: (Int64) -> String
+    let onClean: ([CacheEntry]) -> Void
+
+    private var allEntries: [CacheEntry] { userCaches + systemCaches }
+    private var selectedEntries: [CacheEntry] { allEntries.filter { selectedIDs.contains($0.id) } }
+    private var selectedSize: Int64 { selectedEntries.reduce(0) { $0 + $1.size } }
+    private var allSelected: Bool { !allEntries.isEmpty && allEntries.allSatisfy { selectedIDs.contains($0.id) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(L10n.text("缓存空间分析")).font(.title2.weight(.semibold))
+                    Text(L10n.text("选择要清理的用户缓存或系统缓存目录；清理前会列出具体内容并再次验证。"))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(L10n.text(allSelected ? "取消全选" : "全选")) {
+                    if allSelected { selectedIDs.subtract(allEntries.map(\.id)) }
+                    else { selectedIDs.formUnion(allEntries.map(\.id)) }
+                }
+                .disabled(allEntries.isEmpty || scanning)
+            }
+            HStack(spacing: 12) {
+                cacheSummary(title: "用户缓存", value: size(userCaches.reduce(0) { $0 + $1.size }), count: userCaches.count, color: .teal)
+                cacheSummary(title: "系统缓存", value: size(systemTotal ?? systemCaches.reduce(0) { $0 + $1.size }), count: systemCaches.count, color: .orange)
+                cacheSummary(title: "所选项目", value: size(selectedSize), count: selectedEntries.count, color: .purple)
+            }
+            if systemIncomplete {
+                Label(L10n.text("部分系统缓存不可读取，显示的系统占用可能不完整。"), systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            Text(L10n.text("系统缓存扫描范围为 /Library/Caches；/System 与 /private/var 由 macOS 管理，不纳入清理。"))
+                .font(.caption).foregroundStyle(.secondary)
+            if scanning {
+                ProgressView(L10n.text("正在分析缓存…"))
+            }
+            if allEntries.isEmpty && !scanning {
+                ContentUnavailableView(L10n.text("没有可供清理的缓存目录"), systemImage: "externaldrive.badge.checkmark")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        cacheSection("用户缓存", path: "~/Library/Caches", entries: userCaches)
+                        cacheSection("系统缓存", path: "/Library/Caches", entries: systemCaches)
+                    }
+                }
+                .frame(minHeight: 220)
+            }
+            Text(L10n.text("系统目录中的受保护项目可能无法移入废纸篓；无法处理的项目会保留并显示在结果中。"))
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            HStack {
+                Button(L10n.text("取消")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(L10n.format("审核并清理（%{0}）", arguments: [String(selectedEntries.count)])) {
+                    let entries = selectedEntries
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onClean(entries) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedEntries.isEmpty || scanning)
+            }
+        }
+        .padding(22)
+    }
+
+    private func cacheSummary(title: String, value: String, count: Int, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(L10n.text(title)).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.headline.monospacedDigit())
+            Text(L10n.format("%{0} 个目录", arguments: [String(count)]))
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func cacheSection(_ title: String, path: String, entries: [CacheEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(L10n.text(title)).font(.headline)
+                Text(path).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text(L10n.format("%{0} 个目录", arguments: [String(entries.count)]))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if entries.isEmpty {
+                Text(L10n.text(scanning ? "正在分析缓存…" : "没有可读取的缓存目录"))
+                    .font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
+            } else {
+                ForEach(entries) { entry in
+                    Button {
+                        if selectedIDs.contains(entry.id) { selectedIDs.remove(entry.id) }
+                        else { selectedIDs.insert(entry.id) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: selectedIDs.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedIDs.contains(entry.id) ? .teal : .secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(name(entry)).font(.body.weight(.medium)).lineLimit(1)
+                                Text(entry.url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 10)
+                            Text(size(entry.size)).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                        .background(selectedIDs.contains(entry.id) ? Color.teal.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(scanning)
+                    .help(entry.url.path)
+                }
+            }
+        }
+    }
+}
+
+private final class LargeFilesWindowController: NSWindowController {
+    init(rootView: LargeFilesWindowView) {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 580),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              backing: .buffered, defer: false)
+        window.title = L10n.text("查找大文件")
+        window.minSize = NSSize(width: 560, height: 400)
+        window.appearance = DashboardWindow.preferredAppearance
+        window.contentView = NSHostingView(rootView: rootView.preferredColorScheme(DashboardWindow.preferredColorScheme))
+        super.init(window: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshAppearance),
+                                              name: .appearanceModeChanged, object: nil)
+    }
+
+    @objc private func refreshAppearance() {
+        window?.appearance = DashboardWindow.preferredAppearance
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private struct LargeFilesWindowView: View {
+    @Binding var files: [LargeFileEntry]
+    @Binding var selectedIDs: Set<String>
+    @Binding var searching: Bool
+    @Binding var searched: Bool
+    @Binding var operationMessage: String?
+    let scan: () -> Void
+    let trash: () -> Void
+    let folderName: (String) -> String
+    let size: (Int64) -> String
+    @State private var confirmingTrash = false
+    @State private var preferredScheme = DashboardWindow.preferredColorScheme
+
+    private var selectedFiles: [LargeFileEntry] { files.filter { selectedIDs.contains($0.id) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text("查找大文件")).font(.title2.weight(.semibold))
+                    Text(L10n.text("扫描桌面、文稿、下载、影片、音乐和图片目录中的 100 MB 以上文件。"))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: scan) {
+                    Label(L10n.text(searching ? "查找中…" : "重新扫描"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .disabled(searching)
+            }
+            Divider()
+            HStack {
+                Text(searched
+                     ? L10n.format("找到 %{0} 个大文件（≥ %{1}）", arguments: [String(files.count), size(100 * 1024 * 1024)])
+                     : L10n.text("准备扫描常用文件夹"))
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                if searching { ProgressView().controlSize(.small) }
+                if !files.isEmpty {
+                    Button(L10n.text(selectedIDs.count == files.count ? "取消全选" : "全选")) {
+                        if selectedIDs.count == files.count { selectedIDs.removeAll() }
+                        else { selectedIDs = Set(files.map(\.id)) }
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            if searching && files.isEmpty {
+                Spacer()
+                ProgressView(L10n.text("正在扫描文件…"))
+                    .frame(maxWidth: .infinity)
+                Spacer()
+            } else if searched && files.isEmpty {
+                Spacer()
+                ContentUnavailableView(L10n.text("未找到 100 MB 以上的大文件"), systemImage: "doc.text.magnifyingglass")
+                    .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                List(files) { file in
+                    Button {
+                        if selectedIDs.contains(file.id) { selectedIDs.remove(file.id) }
+                        else { selectedIDs.insert(file.id) }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: selectedIDs.contains(file.id) ? "checkmark.circle.fill" : "circle")
+                                .font(.title3).foregroundStyle(selectedIDs.contains(file.id) ? .teal : .secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(file.url.lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
+                                Text("\(folderName(file.folderName)) · \(file.url.deletingLastPathComponent().path)")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 12)
+                            Text(size(file.allocatedSize)).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(file.url.path)
+                }
+            }
+            if let operationMessage {
+                Text(L10n.text(operationMessage)).font(.caption).foregroundStyle(.secondary)
+            }
+            Divider()
+            HStack {
+                Button(L10n.text("在 Finder 中显示")) {
+                    NSWorkspace.shared.activateFileViewerSelecting(selectedFiles.map(\.url))
+                }
+                .buttonStyle(.bordered)
+                .disabled(selectedFiles.isEmpty)
+                Spacer()
+                Button(L10n.format("移入废纸篓（%{0}）", arguments: [String(selectedFiles.count)])) {
+                    confirmingTrash = true
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedFiles.isEmpty || searching)
+            }
+        }
+        .padding(22)
+        .frame(minWidth: 560, minHeight: 400)
+        .confirmationDialog(L10n.text("将所选大文件移入废纸篓？"), isPresented: $confirmingTrash, titleVisibility: .visible) {
+            Button(L10n.text("移入废纸篓"), role: .destructive, action: trash)
+            Button(L10n.text("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.format("将 %{0} 个所选文件移入废纸篓，可从废纸篓恢复。", arguments: [String(selectedFiles.count)]))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appearanceModeChanged)) { _ in
+            preferredScheme = DashboardWindow.preferredColorScheme
+        }
+        .preferredColorScheme(preferredScheme)
     }
 }
 
@@ -3717,9 +4412,11 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
             icon.heightAnchor.constraint(equalToConstant: 28),
             search.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 82),
             search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -36),
-            search.topAnchor.constraint(equalTo: root.topAnchor, constant: 34),
-            search.heightAnchor.constraint(equalToConstant: 40),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 12),
+            // NSTextField aligns its text near the top of an oversized frame.
+            // Use its natural text height and center that frame with the icon.
+            search.centerYAnchor.constraint(equalTo: root.topAnchor, constant: 54),
+            search.heightAnchor.constraint(equalToConstant: search.intrinsicContentSize.height),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 86),
             scroll.leadingAnchor.constraint(equalTo: search.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: search.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -22)
@@ -3783,7 +4480,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
             rows.append(Entry(id: "terminal:" + command, title: L10n.format("在终端执行 %{0}", arguments: [command]), detail: L10n.format("按回车运行；带参数时可输入 > %{0} 参数", arguments: [command]), symbol: "terminal", target: .command(command)))
         }
         if engine.requiresFullDiskAccess {
-            rows.append(Entry(id: "permission", title: "开启完全磁盘访问以搜索文件与文件夹", detail: "在系统设置中允许 AI Lock，然后重新启动", symbol: "lock", target: .diskAccess))
+            rows.append(Entry(id: "permission", title: "当前程序的文件访问被系统拦截", detail: SearchDiskAccess.permissionDetail, symbol: "lock", target: .diskAccess))
         } else if rows.isEmpty {
             rows.append(Entry(id: "status", title: engine.isSearching ? "正在搜索文件、文件夹与应用…" : "没有找到匹配结果", detail: "未找到时可输入完整路径；网址直接打开，> 命令在终端执行", symbol: "magnifyingglass", target: .status))
         }

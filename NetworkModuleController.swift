@@ -278,24 +278,24 @@ private struct NetworkActivityView: View {
         VStack(alignment: .leading, spacing: 10) {
             overview
             trafficDashboard
-            HStack {
-                TextField(L10n.text("搜索应用、PID、IP、端口或服务"), text: $model.search).textFieldStyle(.roundedBorder)
-                Button { model.refresh?() } label: { Label(L10n.text(model.sampling ? L10n.text("采样中") : L10n.text("刷新")), systemImage: "arrow.clockwise") }.disabled(model.paused || model.sampling)
-                Button { model.togglePause?() } label: { Label(L10n.text(model.paused ? L10n.text("继续") : L10n.text("暂停")), systemImage: model.paused ? "play" : "pause") }
-                Button { model.export() } label: { Label(L10n.text("导出"), systemImage: "square.and.arrow.up") }.disabled(model.visible.isEmpty)
+            HStack(spacing: 4) {
+                TextField(L10n.text("搜索应用、PID、IP、端口或服务"), text: $model.search)
+                    .textFieldStyle(.roundedBorder).frame(width: L10n.isEnglish ? 260 : 220)
+                Picker("", selection: $model.period) { ForEach(["当前连接", "最近变化", "全部记录"], id: \.self) { Text(L10n.text($0)) } }
+                    .pickerStyle(.segmented).frame(width: L10n.isEnglish ? 270 : 220)
+                Picker("", selection: $model.app) { Text(L10n.text("所有应用")).tag("所有应用"); ForEach(model.apps, id: \.self) { Text($0).tag($0) } }
+                    .labelsHidden().frame(width: L10n.isEnglish ? 170 : 140)
+                Picker("", selection: $model.proto) { ForEach(["所有协议", "TCP", "UDP"], id: \.self) { Text(L10n.text($0)) } }
+                    .labelsHidden().frame(width: L10n.isEnglish ? 135 : 105)
+                Picker("", selection: $model.scope) { ForEach(scopes, id: \.self) { Text(L10n.text($0)) } }
+                    .labelsHidden().frame(width: L10n.isEnglish ? 135 : 105)
+                Picker("", selection: $model.sort) { ForEach(["最近变化", "应用名称", "远端地址", "观测时长"], id: \.self) { Text(L10n.text($0)) } }
+                    .labelsHidden().frame(width: L10n.isEnglish ? 170 : 135)
             }
-            HStack {
-                Picker("", selection: $model.period) { ForEach(["当前连接", "最近变化", "全部记录"], id: \.self) { Text(L10n.text($0)) } }.pickerStyle(.segmented).frame(width: L10n.isEnglish ? 360 : 280)
-                Spacer()
+            HStack(spacing: 4) {
                 Toggle(L10n.text("按应用分组"), isOn: $model.grouped).toggleStyle(.checkbox)
-                Picker(L10n.text("排序"), selection: $model.sort) { ForEach(["最近变化", "应用名称", "远端地址", "观测时长"], id: \.self) { Text(L10n.text($0)) } }.frame(width: L10n.isEnglish ? 230 : 180)
-            }
-            HStack {
-                Picker(L10n.text("应用"), selection: $model.app) { Text(L10n.text("所有应用")).tag("所有应用"); ForEach(model.apps, id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 280)
-                Picker(L10n.text("协议"), selection: $model.proto) { ForEach(["所有协议", "TCP", "UDP"], id: \.self) { Text(L10n.text($0)) } }.frame(width: L10n.isEnglish ? 200 : 140)
-                Picker(L10n.text("范围"), selection: $model.scope) { ForEach(scopes, id: \.self) { Text(L10n.text($0)) } }.frame(width: L10n.isEnglish ? 180 : 160)
-                Spacer()
                 Button(L10n.text("重置筛选")) { model.search = ""; model.app = "所有应用"; model.proto = "所有协议"; model.scope = "所有范围"; model.period = "当前连接" }
+                Button { model.export() } label: { Label(L10n.text("导出"), systemImage: "square.and.arrow.up") }.disabled(model.visible.isEmpty)
             }
             if model.grouped { groupedList } else { connectionTable }
             HStack {
@@ -305,13 +305,12 @@ private struct NetworkActivityView: View {
                 Button(L10n.text("连接详情")) { model.detail = model.chosen }.disabled(model.chosen == nil)
             }
             HStack {
-                Text(L10n.text(model.paused ? L10n.text("已暂停采样") : model.status)).lineLimit(2)
                 Spacer()
                 if let date = model.sampledAt { Text(L10n.format("更新 %{0}", arguments: [String(describing: date.formatted(date: .omitted, time: .standard))])) }
             }.font(.caption).foregroundStyle(.secondary)
-            Text(L10n.text("可访问进程的 TCP / UDP 快照，可能遗漏短连接；时间为观测时间，端口说明仅供识别。流量为应用汇总，主机名来自反向 DNS。")).font(.caption).foregroundStyle(.secondary)
         }
-        .padding(12).frame(minWidth: 700, minHeight: 430)
+        .padding(.horizontal, 12).padding(.top, 0).padding(.bottom, 0)
+        .frame(minWidth: 700, minHeight: 430, maxHeight: .infinity, alignment: .topLeading)
         .sheet(item: $model.detail) { record in NetworkConnectionDetail(record: record, model: model) }
     }
     private var overview: some View {
@@ -386,8 +385,8 @@ private struct NetworkActivityView: View {
                 } else {
                     ForEach(apps) { app in
                         HStack(spacing: 6) {
-                            Image(nsImage: NSRunningApplication(processIdentifier: app.pid)?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)!)
-                                .resizable().frame(width: 15, height: 15)
+                            Image(nsImage: applicationIcon(for: app.pid))
+                                .resizable().aspectRatio(contentMode: .fit).frame(width: 18, height: 18)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(app.name).lineLimit(1)
                                 Text("↓ \(NetworkActivityModel.speed(app.download))   ↑ \(NetworkActivityModel.speed(app.upload))")
@@ -407,6 +406,16 @@ private struct NetworkActivityView: View {
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) { Text(L10n.text(title)).font(.caption).foregroundStyle(.secondary); Text(L10n.text(value)).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8) }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+    private func applicationIcon(for pid: pid_t) -> NSImage {
+        if let icon = NSRunningApplication(processIdentifier: pid)?.icon { return icon }
+        if pid > 0 {
+            var buffer = [CChar](repeating: 0, count: 4096)
+            if proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 {
+                return NSWorkspace.shared.icon(forFile: String(cString: buffer))
+            }
+        }
+        return NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil) ?? NSImage(size: NSSize(width: 18, height: 18))
     }
     private var connectionTable: some View {
         Table(model.visible, selection: $model.selected) {

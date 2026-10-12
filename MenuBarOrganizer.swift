@@ -10,6 +10,7 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
     private let defaults: UserDefaults
     private var arrow: NSStatusItem?
     private var spacer: NSStatusItem?
+    private var spacerPreferredPosition: Double?
     private weak var residentItem: NSStatusItem?
     private var restoreResident: ((Double) -> NSStatusItem?)?
 
@@ -33,6 +34,7 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
     private var languageObserver: NSObjectProtocol?
     private var layoutRequest = UUID()
     private var hiddenWindowIDs: Set<CGWindowID> = []
+    private var expansionPending = false
     static var supportsFolding: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 }
     static let enabledKey = "menubar.organizer.enabled"
     static let autoHideKey = "menubar.organizer.autoHide"
@@ -51,42 +53,49 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
     }
 
     static func collapsedLength(screenWidths: [CGFloat]) -> CGFloat {
-        max(500, min((screenWidths.max() ?? 500) * 2, 10_000))
+        // Preferred positions are ordering hints and can include an old folded
+        // spacer's width. Size from display geometry, not those saved values.
+        max(500, min(max((screenWidths.max() ?? 500) * 2, screenWidths.reduce(0, +)), 10_000))
     }
 
-    /// Put the spacer between the arrow and the nearest item on its collection side.
+    /// Larger preferred positions are left of the arrow, in the collection area.
     static func spacerPosition(after arrowPosition: Double, occupiedPositions: [Double]) -> Double {
         let epsilon = 0.000_001
         guard let nearestItem = occupiedPositions.filter({ $0 > arrowPosition + epsilon }).min() else {
             return arrowPosition + 1
         }
-        // A system extra can occupy the old +1 slot (Sound is at 301 on this Mac).
-        // An intermediate ordering value keeps the spacer on the arrow-facing side
-        // of that item, so expanding it pushes the item into the hidden region.
-        var upperBound = nearestItem
-        var candidate = (arrowPosition + upperBound) / 2
+        // Never select the resident icon to the right, even if it is closer.
+        var candidate = (arrowPosition + nearestItem) / 2
         while occupiedPositions.contains(where: { abs($0 - candidate) < epsilon }) {
-            upperBound = candidate
-            candidate = (arrowPosition + upperBound) / 2
-            if abs(candidate - arrowPosition) < epsilon { return arrowPosition + epsilon * 2 }
+            candidate = (arrowPosition + candidate) / 2
+            if abs(candidate - arrowPosition) < epsilon {
+                return arrowPosition + epsilon * 2
+            }
         }
         return candidate
     }
 
-    private func nextSpacerPosition() -> Double {
+    private func statusItemPositions() -> [Double] {
         let prefix = "NSStatusItem Preferred Position "
-        // Control Center stores Apple menu extras (including Sound) in its own domain.
-        let domains = [UserDefaults.standard.dictionaryRepresentation(),
-                       UserDefaults(suiteName: "com.apple.controlcenter")?.dictionaryRepresentation() ?? [:],
-                       UserDefaults(suiteName: "com.apple.systemuiserver")?.dictionaryRepresentation() ?? [:]]
-        let positions = domains.flatMap { domain in
+        // Third-party menu-bar apps store positions in their own defaults
+        // suites. Inspect running app suites as well as Apple's menu-bar suites.
+        let suiteNames = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
+        let domains = suiteNames.compactMap { UserDefaults(suiteName: $0)?.dictionaryRepresentation() }
+            + [UserDefaults.standard.dictionaryRepresentation(),
+               UserDefaults(suiteName: "com.apple.controlcenter")?.dictionaryRepresentation() ?? [:],
+               UserDefaults(suiteName: "com.apple.systemuiserver")?.dictionaryRepresentation() ?? [:]]
+        return domains.flatMap { domain in
             domain.compactMap { key, value -> Double? in
                 guard key.hasPrefix(prefix), key != prefix + "AILock.Organizer.Space" else { return nil }
                 return (value as? NSNumber)?.doubleValue
             }
         }
+    }
+
+    private func nextSpacerPosition(occupiedPositions: [Double]) -> Double {
+        let prefix = "NSStatusItem Preferred Position "
         let arrowPosition = UserDefaults.standard.double(forKey: prefix + "AILock.Organizer.Control")
-        return Self.spacerPosition(after: arrowPosition, occupiedPositions: positions)
+        return Self.spacerPosition(after: arrowPosition, occupiedPositions: occupiedPositions)
     }
 
     func start() {
@@ -101,7 +110,8 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
         enabled = defaults.bool(forKey: Self.enabledKey) && Self.supportsFolding
         if enabled {
             if arrow == nil {
-                UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position AILock.Organizer.Control")
+                let key = "NSStatusItem Preferred Position AILock.Organizer.Control"
+                if UserDefaults.standard.object(forKey: key) == nil { UserDefaults.standard.set(300, forKey: key) }
                 let control = NSStatusBar.system.statusItem(withLength: 24)
                 control.autosaveName = "AILock.Organizer.Control"
                 control.button?.target = self; control.button?.action = #selector(arrowClicked(_:))
@@ -118,33 +128,41 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
         }
     }
 
-    private func applyLayout() {
+    private func applyLayout(repositionSpacer: Bool = false) {
         arrow?.length = 24
         // Only reposition the resident item before folding it. During expansion,
         // rebuilding its NSStatusItem makes the icon blink as hidden items return.
         if !expanded { restoreResidentIfNeeded() }
         if expanded {
-            spacer?.length = 1
+            // isVisible=false clears the native saved position. Reusing that
+            // item on the next fold can put it on the wrong side of the arrow.
+            // Remove once, without first resizing, to avoid two layout passes.
             if let spacer { NSStatusBar.system.removeStatusItem(spacer) }
             spacer = nil
+            spacerPreferredPosition = nil
         } else {
             // Command-dragging a new icon immediately left of the arrow can
             // put it between the arrow and the invisible spacer. Reinsert the
             // spacer at the arrow boundary so it includes those new icons.
-            if arrow?.button?.window != nil {
-                spacer?.length = 1
-                if let spacer { NSStatusBar.system.removeStatusItem(spacer) }
+            if arrow?.button?.window != nil, spacer == nil || repositionSpacer {
                 // Place the spacer immediately on the arrow-facing side of the
                 // nearest collected icon, even if a system extra uses arrow+1.
-                let position = nextSpacerPosition()
-                UserDefaults.standard.set(position, forKey: "NSStatusItem Preferred Position AILock.Organizer.Space")
-                let replacement = NSStatusBar.system.statusItem(withLength: 1)
-                replacement.autosaveName = "AILock.Organizer.Space"
-                spacer = replacement
+                let occupiedPositions = statusItemPositions()
+                let position = nextSpacerPosition(occupiedPositions: occupiedPositions)
+                if spacer == nil || spacerPreferredPosition.map({ abs($0 - position) > 0.000_001 }) ?? true {
+                    spacer?.length = 1
+                    if let spacer { NSStatusBar.system.removeStatusItem(spacer) }
+                    UserDefaults.standard.set(position, forKey: "NSStatusItem Preferred Position AILock.Organizer.Space")
+                    let replacement = NSStatusBar.system.statusItem(withLength: 1)
+                    replacement.autosaveName = "AILock.Organizer.Space"
+                    spacer = replacement
+                    spacerPreferredPosition = position
+                }
             }
             spacer?.length = Self.collapsedLength(screenWidths: NSScreen.screens.map { $0.frame.width })
         }
         layoutRequest = UUID()
+        expansionPending = expanded && !hiddenWindowIDs.isEmpty
         if expanded, !hiddenWindowIDs.isEmpty {
             arrow?.button?.toolTip = L10n.text("正在展开菜单栏图标…")
             updateExpandedArrowWhenVisible(request: layoutRequest, deadline: Date().addingTimeInterval(2))
@@ -152,8 +170,12 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
             updateArrow()
         }
         if !expanded {
+            let request = layoutRequest
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, self.enabled, !self.expanded else { return }
+                guard let self, self.layoutRequest == request, self.enabled, !self.expanded else { return }
+                if ProcessInfo.processInfo.environment["AILOCK_MENUBAR_TRACE"] == "1" {
+                    NSLog("Menu bar fold: arrow=%@ resident=%@ screens=%@", String(describing: self.arrow?.button?.window?.frame), String(describing: self.residentItem?.button?.window?.frame), String(describing: NSScreen.screens.map(\.frame)))
+                }
                 guard let frame = self.arrow?.button?.window?.frame,
                       NSScreen.screens.contains(where: { $0.frame.intersects(frame) }),
                       self.residentItem.map({ item in
@@ -204,6 +226,7 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
         let visible = Set(visibleWindowFrames().keys)
         if hiddenWindowIDs.isSubset(of: visible) || Date() >= deadline {
             hiddenWindowIDs = []
+            expansionPending = false
             updateArrow()
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -213,13 +236,16 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
     }
 
     @objc private func arrowClicked(_ sender: Any?) {
+        // The native menu bar completes its layout asynchronously. Do not
+        // reverse an expansion before the hidden icons have returned.
+        guard !expansionPending else { return }
         toggle()
     }
 
     func toggle() {
         guard enabled else { return }
         if expanded { rememberVisibleIcons() }
-        expanded.toggle(); applyLayout(); scheduleAutoHide()
+        expanded.toggle(); applyLayout(repositionSpacer: !expanded); scheduleAutoHide()
     }
 
     func expandForArrangement() {
@@ -239,19 +265,19 @@ final class MenuBarOrganizer: NSObject, ObservableObject {
                 pointer.x >= screen.frame.minX && pointer.x <= screen.frame.maxX && pointer.y >= screen.visibleFrame.maxY && pointer.y <= screen.frame.maxY
             }
             if interacting { self.scheduleAutoHide() }
-            else { self.rememberVisibleIcons(); self.expanded = false; self.applyLayout() }
+            else { self.rememberVisibleIcons(); self.expanded = false; self.applyLayout(repositionSpacer: true) }
         }
         hideTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
     private func removeItems() {
-        layoutRequest = UUID(); hiddenWindowIDs = []
+        layoutRequest = UUID(); hiddenWindowIDs = []; expansionPending = false
         hideTimer?.invalidate(); hideTimer = nil
         spacer?.length = 1 // Restore hidden items before removing our control.
         if let spacer { NSStatusBar.system.removeStatusItem(spacer) }
         if let arrow { NSStatusBar.system.removeStatusItem(arrow) }
-        spacer = nil; arrow = nil; expanded = true
+        spacer = nil; spacerPreferredPosition = nil; arrow = nil; expanded = true
     }
 
     func stop() {
@@ -285,8 +311,6 @@ struct MenuBarOrganizerSettingsView: View {
             HStack {
                 Button(L10n.text("展开并整理图标")) { MenuBarOrganizer.shared.expandForArrangement() }.disabled(!enabled)
             }
-            Text(L10n.text("菜单栏收纳无需额外权限。"))
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: autoHide) { _, _ in changed() }
     }

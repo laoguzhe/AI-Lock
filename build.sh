@@ -96,6 +96,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key><string>Copyright © 2026 gu lao. All rights reserved.</string>
 	<key>NSSystemExtensionUsageDescription</key><string>AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。</string>
+	<key>NSAppleEventsUsageDescription</key><string>AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。</string>
 	<key>LSUIElement</key><true/>
 </dict>
 </plist>

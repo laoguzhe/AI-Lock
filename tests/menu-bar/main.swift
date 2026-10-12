@@ -3,6 +3,16 @@ import SwiftUI
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 app.finishLaunching()
+// Control Center hosts real status-item replicas on secondary displays.
+// Their window metadata lets this regression check InstantView without
+// taking screenshots or clicking another application's menu.
+func visibleInstantViewWindows() -> Set<CGWindowID> {
+    Set((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []).compactMap { window in
+        guard window[kCGWindowName as String] as? String == "com.SMI-Inc.InstantView",
+              window[kCGWindowLayer as String] as? Int == 25 else { return nil }
+        return window[kCGWindowNumber as String] as? CGWindowID
+    })
+}
 // Multiple-display geometry is what prevents a hidden section leaking onto a
 // wider external display; empty and huge display sets must stay bounded.
 precondition(MenuBarOrganizer.collapsedLength(screenWidths: [1512, 3440]) >= 3440)
@@ -11,6 +21,8 @@ precondition(MenuBarOrganizer.collapsedLength(screenWidths: [20_000]) == 10_000)
 precondition(MenuBarOrganizer.collapsedLength(screenWidths: []) >= 500)
 precondition(MenuBarOrganizer.spacerPosition(after: 300, occupiedPositions: [301, 302]) == 300.5,
              "The collapse spacer must sit between the arrow and Sound at position 301")
+precondition(MenuBarOrganizer.spacerPosition(after: 300, occupiedPositions: [299.9, 301, 302]) == 300.5,
+             "A closer resident item on the right must never move the spacer out of the collection area")
 let suite = "com.laogu.ailock.menubar-tests." + UUID().uuidString
 let defaults = UserDefaults(suiteName: suite)!
 defer { defaults.removePersistentDomain(forName: suite) }
@@ -68,6 +80,7 @@ if MenuBarOrganizer.supportsFolding {
         otherEntries.append(extra)
     }
     RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+    let instantViewWindows = visibleInstantViewWindows()
     active.toggle()
     precondition(!active.expanded && active.controlLength == 24)
     precondition((active.hiddenSpaceLength ?? 0) >= 500)
@@ -84,6 +97,13 @@ if MenuBarOrganizer.supportsFolding {
     for extra in otherEntries {
         precondition(!NSScreen.screens.contains { $0.frame.intersects(extra.button!.window!.frame) }, "Every left-hand icon must hide")
     }
+    precondition(instantViewWindows.isDisjoint(with: visibleInstantViewWindows()), "Real InstantView replicas must be hidden when collected")
+    let foldedSpacer = Mirror(reflecting: active).children.first { $0.label == "spacer" }!.value
+    let foldedItem = Mirror(reflecting: foldedSpacer).children.first!.value as! NSStatusItem
+    NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    let refreshedSpacer = Mirror(reflecting: active).children.first { $0.label == "spacer" }!.value
+    precondition(Mirror(reflecting: refreshedSpacer).children.first!.value as! NSStatusItem === foldedItem,
+                 "A display-layout notification must not remove and recreate the folding item")
     let collapsedImage = control.button!.image!.tiffRepresentation
     active.expandForArrangement()
     precondition(active.expanded && active.controlLength == 24 && active.hiddenSpaceLength == nil)
@@ -94,6 +114,25 @@ if MenuBarOrganizer.supportsFolding {
     RunLoop.main.run(until: Date().addingTimeInterval(1.2))
     precondition(control.button!.image!.tiffRepresentation != collapsedImage, "Arrow must reflect completed expansion")
     precondition(NSScreen.screens.contains { $0.frame.intersects(entry.button!.window!.frame) })
+    for cycle in 0..<3 {
+        active.perform(NSSelectorFromString("arrowClicked:"), with: nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        precondition(!active.expanded)
+        precondition(instantViewWindows.isDisjoint(with: visibleInstantViewWindows()), "InstantView must hide on every collapse")
+        active.perform(NSSelectorFromString("arrowClicked:"), with: nil)
+        active.perform(NSSelectorFromString("arrowClicked:"), with: nil)
+        precondition(active.expanded, "A repeated arrow action must not reverse a pending expansion")
+        var returnedWindows: Set<CGWindowID> = []
+        for _ in 0..<75 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            precondition(active.expanded, "Expansion must not reverse while the native menu bar settles")
+            let visible = visibleInstantViewWindows().intersection(instantViewWindows)
+            precondition(returnedWindows.isSubset(of: visible), "Once InstantView returns, it must not flicker off again")
+            returnedWindows.formUnion(visible)
+        }
+        precondition(returnedWindows == instantViewWindows, "All real InstantView replicas must return")
+        print("PASS: expansion cycle \(cycle + 1), real InstantView replicas=\(instantViewWindows.count), no visibility reversal")
+    }
     NSStatusBar.system.removeStatusItem(mainEntry)
     UserDefaults.standard.set(400, forKey: "NSStatusItem Preferred Position AILock.Tests.Main")
     mainEntry = NSStatusBar.system.statusItem(withLength: 120)

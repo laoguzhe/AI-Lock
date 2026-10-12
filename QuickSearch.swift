@@ -3,15 +3,26 @@ import CoreServices
 import Darwin
 
 enum SearchDiskAccess {
+    enum Status { case granted, denied, unknown }
     /// Probe an existing FDA-protected file without reading its contents. Full
     /// Disk Access is granted in System Settings, rather than folder prompts.
-    static func isGranted() -> Bool {
+    static func status() -> Status {
         let path = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/com.apple.TCC/TCC.db").path
-        let descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC)
-        guard descriptor >= 0 else { return false }
+        var descriptor: Int32
+        repeat { descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC) }
+        while descriptor < 0 && errno == EINTR
+        guard descriptor >= 0 else {
+            // Missing files, descriptor exhaustion and I/O errors say nothing
+            // about TCC authorization. Only an explicit denial blocks search.
+            return errno == EPERM || errno == EACCES ? .denied : .unknown
+        }
         Darwin.close(descriptor)
-        return true
+        return .granted
+    }
+    static func isGranted() -> Bool { status() == .granted }
+    static var permissionDetail: String {
+        L10n.text("若已开启，请确认授权的是当前程序，完全退出后重新打开。") + "\n" + Bundle.main.bundleURL.path
     }
     static func openSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
@@ -113,7 +124,7 @@ final class QuickSearch {
     private var directoryCapture = 0
     private(set) var requiresFullDiskAccess = false
 
-    init(directoryRoots: [URL]? = nil, diskAccessCheck: @escaping () -> Bool = SearchDiskAccess.isGranted) {
+    init(directoryRoots: [URL]? = nil, diskAccessCheck: @escaping () -> Bool = { SearchDiskAccess.status() != .denied }) {
         self.diskAccessCheck = diskAccessCheck
         usesNameCatalog = directoryRoots == nil
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -130,6 +141,10 @@ final class QuickSearch {
             self.publishResults()
         })
         catalog.refreshIfNeeded()
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, let completion = self.activeCompletion, !self.activeTerm.isEmpty else { return }
+            self.search(self.activeTerm, completion: completion)
+        })
         metadataQuery.searchScopes = [NSMetadataQueryLocalComputerScope]
         observers.append(NotificationCenter.default.addObserver(
             forName: .NSMetadataQueryDidUpdate, object: metadataQuery, queue: .main

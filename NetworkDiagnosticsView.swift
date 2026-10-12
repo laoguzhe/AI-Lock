@@ -110,7 +110,7 @@ struct NetworkDiagnosticsView: View {
     @AppStorage("overview.followSystemLanguage") private var followsSystem = true
     @State private var interface = ""
     @State private var allInterfaces = false
-    @State private var target = "www.baidu.com"
+    @State private var target = "www.haidatas.com"
     @State private var port = "443"
     @State private var resolver = ""
     @State private var selectedNodes = Set(NetworkDiagnosticNode.defaults.map(\.id))
@@ -298,22 +298,41 @@ struct NetworkDiagnosticsView: View {
                 readout("已探测跳数", value: hops.isEmpty ? "—" : String(hops.count))
                 readout("无响应跳数", value: hops.isEmpty ? "—" : String(hops.filter { $0.milliseconds == nil }.count))
             }
-            Chart {
-                ForEach(hops) { hop in
-                    if let time = hop.milliseconds {
-                        LineMark(x: .value("Hop", hop.index), y: .value("ms", time), series: .value("Segment", hops.filter { $0.index < hop.index && $0.milliseconds == nil }.count)).foregroundStyle(DiagnosticConsole.cyan)
-                        PointMark(x: .value("Hop", hop.index), y: .value("ms", time)).foregroundStyle(DiagnosticConsole.cyan).symbolSize(15)
-                    } else {
-                        RuleMark(x: .value("Hop", hop.index)).foregroundStyle(DiagnosticConsole.amber.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                    }
+            ScrollView {
+                if hops.isEmpty {
+                    emptyPlot.frame(minHeight: 100)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(hops.indices, id: \.self) { offset in
+                            let hop = hops[offset]
+                            HStack(alignment: .top, spacing: 9) {
+                                VStack(spacing: 0) {
+                                    Circle()
+                                        .fill(hop.milliseconds == nil ? DiagnosticConsole.amber : DiagnosticConsole.cyan)
+                                        .frame(width: 8, height: 8)
+                                    if offset < hops.count - 1 {
+                                        Rectangle().fill(DiagnosticConsole.edge).frame(width: 1, height: 27)
+                                    }
+                                }.frame(width: 12)
+                                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                    Text(String(format: "%02d", hop.index))
+                                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(DiagnosticConsole.muted)
+                                    Text(hop.address ?? L10n.text("未响应"))
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(hop.milliseconds == nil ? DiagnosticConsole.amber : DiagnosticConsole.text)
+                                        .lineLimit(1).truncationMode(.middle)
+                                    Spacer(minLength: 2)
+                                    Text(hop.milliseconds.map { String(format: "%.1f ms", $0) } ?? "—")
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundStyle(DiagnosticConsole.muted)
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8)
+                            }
+                            .help("\(hop.index) · \(hop.address ?? L10n.text("未响应")) · " + (hop.milliseconds.map { String(format: "%.1f ms", $0) } ?? "—"))
+                        }
+                    }.padding(.top, 5)
                 }
-            }.diagnosticChart().frame(maxHeight: .infinity).overlay { if hops.isEmpty { emptyPlot } }
-            HStack(spacing: 3) {
-                ForEach(hops) { hop in
-                    Circle().fill(hop.milliseconds == nil ? DiagnosticConsole.amber : DiagnosticConsole.cyan).frame(maxWidth: .infinity).frame(height: 5)
-                        .help("\(hop.index) · \(hop.address ?? L10n.text("未响应")) · " + (hop.milliseconds.map { String(format: "%.1f ms", $0) } ?? "—"))
-                }
-            }.frame(height: 6)
+            }.frame(maxHeight: .infinity)
         }
     }
     private var localDashboard: some View {
@@ -639,6 +658,9 @@ private struct RegionalLatencyMap: View {
         guard let result = result(id) else { return name(id) + " · " + L10n.text("等待测试") }
         let target = result.metrics.first { $0.name == "节点地址" }?.value ?? "—"
         let carrier = result.metrics.first { $0.name == "运营商" }?.value ?? ""
-        return name(id) + " · " + number(id) + " ms\n" + target + " · " + L10n.text(carrier) + "\n" + L10n.text(result.summary)
+        let source = result.metrics.first { $0.name == "节点来源" }?.value
+        return name(id) + " · " + number(id) + " ms\n" + target + " · " + L10n.text(carrier)
+            + (source.map { "\n" + L10n.text("来源") + " · " + $0 } ?? "")
+            + "\n" + L10n.text(result.summary)
     }
 }

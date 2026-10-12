@@ -359,13 +359,14 @@
 				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
 				"DEVELOPMENT_TEAM" = "TQ74Z4L53F";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "com.laogu.ailock";
-				"MARKETING_VERSION" = "1.0";
+				"MARKETING_VERSION" = "1.1";
 				"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.utilities";
 				"MACOSX_DEPLOYMENT_TARGET" = "14.0";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "AI Lock";
 				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。";
+				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SDKROOT" = "macosx";
 				"PRODUCT_NAME" = "AILock";
@@ -432,6 +433,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "AI Lock";
 				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。";
+				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SDKROOT" = "macosx";
 				"PRODUCT_NAME" = "AILock";

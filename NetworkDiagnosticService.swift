@@ -130,7 +130,7 @@ enum NetworkDiagnosticKind: String, CaseIterable, Identifiable, Sendable {
 struct NetworkDiagnosticPlan: Sendable {
     var kind: NetworkDiagnosticKind
     var interfaces: [String] = [""]
-    var target = "www.baidu.com"
+    var target = "www.haidatas.com"
     var port = 443
     var dnsServers = ["", "223.5.5.5", "119.29.29.29", "1.1.1.1", "8.8.8.8"]
     var nodes = NetworkDiagnosticNode.defaults
@@ -657,6 +657,12 @@ enum NetworkDiagnosticAssets {
 struct NetworkLatencyTarget: Codable, Sendable {
     let address: String
     let carrier: String
+    let source: String?
+    init(address: String, carrier: String, source: String? = nil) {
+        self.address = address
+        self.carrier = carrier
+        self.source = source
+    }
 }
 struct NetworkLatencyRegion: Codable, Identifiable, Sendable {
     let id: String
@@ -709,6 +715,7 @@ enum NetworkRegionalLatency {
         var metrics: [NetworkDiagnosticMetric] = [.init(name: "地区 ID", value: region.id)]
         if let target {
             metrics += [.init(name: "节点地址", value: target.address), .init(name: "运营商", value: target.carrier)]
+            if let source = target.source { metrics.append(.init(name: "节点来源", value: source)) }
         }
         if let average { metrics.append(.init(name: "平均延迟", value: String(format: "%.1f ms", average))) }
         if let loss = NetworkDiagnosticPlots.packetLoss(output) { metrics.append(.init(name: "丢包率", value: String(format: "%.0f%%", loss))) }
@@ -720,21 +727,27 @@ enum NetworkRegionalLatency {
         if !interface.isEmpty && source == nil {
             return result(region, target: nil, interface: interface, output: "", details: "当前接口没有可用的 IPv4 地址")
         }
-        var details = "ICMP · 3 probes · regional landmark\n"
+        var details = "ICMP · regional DNS landmarks; sourced fallbacks use 1 probe\n"
         var lastOutput = ""
         var lastTarget: NetworkLatencyTarget?
-        for target in region.targets {
+        let regionalTargets = region.targets
+        let fallbackTargets = [
+            NetworkLatencyTarget(address: "223.5.5.5", carrier: "全国备用", source: "https://help.aliyun.com/zh/dns/free-service-disclaimer"),
+            NetworkLatencyTarget(address: "114.114.114.114", carrier: "全国备用", source: "https://www.114dns.com/")
+        ].filter { fallback in !regionalTargets.contains { $0.address == fallback.address } }
+        for target in regionalTargets + fallbackTargets {
             try Task.checkCancellation()
             guard NetworkDiagnosticService.validTarget(target.address) else { continue }
             lastTarget = target
-            var args = ["-n", "-c", "3", "-i", "0.2", "-W", "800", "-t", "3"]
+            let sourcedFallback = target.source != nil
+            var args = ["-n", "-c", sourcedFallback ? "1" : "3", "-i", "0.2", "-W", sourcedFallback ? "600" : "800", "-t", "3"]
             if !interface.isEmpty { args += ["-b", interface] }
             if let source { args += ["-S", source] }
             args.append(target.address)
             do {
-                let response = try await NetworkDiagnosticCommand.runStreaming("/sbin/ping", args, timeout: 4) { _ in }
+                let response = try await NetworkDiagnosticCommand.runStreaming("/sbin/ping", args, timeout: sourcedFallback ? 2 : 4) { _ in }
                 lastOutput = response.output
-                details += "\n" + target.carrier + " · " + target.address + "\n" + response.output
+                details += "\n" + target.carrier + " · " + target.address + (target.source.map { " · " + $0 } ?? "") + "\n" + response.output
                 if average(response.output) != nil {
                     return result(region, target: target, interface: interface, output: response.output, details: details)
                 }

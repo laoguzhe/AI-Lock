@@ -3,8 +3,12 @@ import SwiftUI
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopoverDelegate {
+    private let statusMetricIconSize: CGFloat = 18
+    private let statusMetricFontSize: CGFloat = 14
     private let lock = DockLock()
     private var item: NSStatusItem!
+    private var baseStatusToolTip = ""
+    private var networkToolTipIsVisible = false
     private var settingsMenu: NSMenu!
     private var dockLockItem: NSMenuItem?
     private var screenMenu: NSMenu!
@@ -67,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
     }
 
     @objc private func refreshLanguage() {
-        item?.button?.toolTip = L10n.text("AI Lock 总览")
+        setBaseStatusToolTip(L10n.text("AI Lock 总览"))
         updateStatusMetrics(monitoring.snapshot)
     }
 
@@ -97,7 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             RunLoop.main.add(timer, forMode: .common)
         }
         var items: [NSAttributedString] = []
-        let visibleMetrics = ResourceAlerts.Metric.allCases.filter { selected.contains($0.rawValue) || active.contains($0) }
+        let networkSelected = selected.contains("network") || selected.contains("networkUpload") || selected.contains("networkDownload")
+        let visibleMetrics = ResourceAlerts.Metric.allCases.filter {
+            selected.contains($0.rawValue) || ($0 == .network && networkSelected) || active.contains($0)
+        }
         for metric in visibleMetrics {
             let isAlert = active.contains(metric)
             let symbol: String
@@ -123,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
                 value = L10n.text(sample.thermalLevel >= 3 ? "严重" : (sample.thermalLevel >= 2 ? "偏高" : "正常"))
             case .network:
                 symbol = "network"
-                value = "↓\(formattedRate(sample.networkDownload)) ↑\(formattedRate(sample.networkUpload))"
+                value = "↓ \(compactRate(sample.networkDownload)) ↑ \(compactRate(sample.networkUpload))"
             case .camera:
                 symbol = "video.fill"
                 value = L10n.text(isAlert ? "使用中" : "未监视")
@@ -142,6 +149,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             if index > 0 { title.append(statusSpacing(5)) }
             title.append(group)
         }
+        if visibleMetrics.contains(.network) {
+            networkToolTipIsVisible = true
+            item.button?.toolTip = L10n.isEnglish
+                ? "Network rate · Download: \(formattedRate(sample.networkDownload)) · Upload: \(formattedRate(sample.networkUpload))"
+                : "网络速率 · 下行：\(formattedRate(sample.networkDownload)) · 上行：\(formattedRate(sample.networkUpload))"
+        } else if networkToolTipIsVisible {
+            networkToolTipIsVisible = false
+            item.button?.toolTip = baseStatusToolTip
+        }
         item.button?.attributedTitle = title
         item.length = NSStatusItem.variableLength
         item.button?.invalidateIntrinsicContentSize()
@@ -154,8 +170,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         String(format: "%.0f%%", value).padding(toLength: 4, withPad: " ", startingAt: 0)
     }
 
+    private func setBaseStatusToolTip(_ value: String) {
+        baseStatusToolTip = value
+        if !networkToolTipIsVisible { item?.button?.toolTip = value }
+    }
+
+    private func compactRate(_ bytesPerSecond: UInt64) -> String {
+        var value = Double(bytesPerSecond)
+        var scale = 0
+        while value >= 1_000 && scale < 6 {
+            value /= 1_000
+            scale += 1
+        }
+        let number = String(format: value < 10 ? "%.1f" : "%.0f", value)
+        return String(repeating: " ", count: max(0, 4 - number.count)) + number
+    }
+
     private func statusValue(_ value: String, isAlert: Bool, isLast: Bool) -> NSAttributedString {
-        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .medium)
+        let font = NSFont.monospacedSystemFont(ofSize: statusMetricFontSize, weight: .medium)
         // Trim the final group instead of moving reserved whitespace between
         // its icon and number. Other groups retain their stable width.
         let displayedValue = isLast ? value.trimmingCharacters(in: .whitespaces) : value
@@ -216,21 +248,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
 
     private func metricAttachment(_ symbol: String, description: String) -> NSAttributedString {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: L10n.text(description))!
-        let iconSize: CGFloat = (symbol == "cpu" || symbol == "memorychip" || symbol == "internaldrive") ? 18 : 12
-        image.size = NSSize(width: iconSize, height: iconSize)
+        let sourceSize = image.size
+        let iconHeight = statusMetricIconSize
+        let aspectRatio = sourceSize.height > 0 ? sourceSize.width / sourceSize.height : 1
+        let iconWidth = iconHeight * aspectRatio
+        image.size = NSSize(width: iconWidth, height: iconHeight)
         image.isTemplate = true
         let attachment = NSTextAttachment()
         attachment.image = image
-        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .medium)
-        attachment.bounds = NSRect(x: 0, y: (font.capHeight - iconSize) / 2, width: iconSize, height: iconSize)
+        let font = NSFont.monospacedSystemFont(ofSize: statusMetricFontSize, weight: .medium)
+        attachment.bounds = NSRect(x: 0, y: (font.capHeight - iconHeight) / 2, width: iconWidth, height: iconHeight)
         return NSAttributedString(attachment: attachment)
     }
 
     @objc private func refreshDockLockState() {
         dockLockItem?.state = lock.enabled ? .on : .off
-        item?.button?.toolTip = lock.waitingForAuthorization
+        setBaseStatusToolTip(lock.waitingForAuthorization
             ? "AI Lock：DockLock 等待辅助功能授权，授权后自动启用"
-            : L10n.text("AI Lock：本机监控运行中")
+            : L10n.text("AI Lock：本机监控运行中"))
     }
 
     @discardableResult
@@ -240,19 +275,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         guard trusted, lock.start() else {
             log("未就绪：AXIsProcessTrusted=\(trusted) 路径=\(Bundle.main.bundlePath)")
             item?.button?.appearsDisabled = false
-            item?.button?.toolTip = L10n.text("AI Lock：Dock 锁定等待辅助功能授权")
+            setBaseStatusToolTip(L10n.text("AI Lock：Dock 锁定等待辅助功能授权"))
             dockLockItem?.state = .off
             return false
         }
         item?.button?.appearsDisabled = false
-        item?.button?.toolTip = L10n.text("AI Lock：本机监控运行中")
+        setBaseStatusToolTip(L10n.text("AI Lock：本机监控运行中"))
         dockLockItem?.state = .on
         return true
     }
 
-    private func setupStatusItem(preferredPosition: Double = 299) {
+    private func setupStatusItem(preferredPosition: Double? = nil) {
         overviewPopover.delegate = self
-        UserDefaults.standard.set(preferredPosition, forKey: "NSStatusItem Preferred Position AILock.Main")
+        let positionKey = "NSStatusItem Preferred Position AILock.Main"
+        if let preferredPosition {
+            UserDefaults.standard.set(preferredPosition, forKey: positionKey)
+        } else if UserDefaults.standard.object(forKey: positionKey) == nil {
+            UserDefaults.standard.set(299, forKey: positionKey)
+        }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.autosaveName = "AILock.Main"
         let statusIconURL = Bundle.main.bundleURL
@@ -272,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         item.button?.target = self
         item.button?.action = #selector(showOverview(_:))
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        item.button?.toolTip = L10n.text("AI Lock 总览")
+        setBaseStatusToolTip(L10n.text("AI Lock 总览"))
     }
 
     @objc private func showOverview(_ sender: Any? = nil) {

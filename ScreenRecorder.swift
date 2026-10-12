@@ -80,7 +80,7 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
                 if !options.contains(where: { $0.id == self.selectedDisplayID }) {
                     selectedDisplayID = options.first?.id
                 }
-                status = options.isEmpty ? "没有找到可录制的显示器。" : "就绪。录制前请选择保存位置。"
+                status = options.isEmpty ? "没有找到可录制的显示器。" : "就绪。录制将保存到设置的位置。"
             } catch {
                 displays = []
                 status = "无法读取显示器：\(error.localizedDescription)"
@@ -88,18 +88,13 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         }
     }
 
-    func chooseOutputAndStart(quality: ScreenRecorderQuality) {
+    func startRecording(in directory: URL, quality: ScreenRecorderQuality) {
         guard let selectedDisplayID,
               displays.contains(where: { $0.id == selectedDisplayID }) else {
             status = "请先选择一个显示器。"
             return
         }
-        let panel = NSSavePanel()
-        panel.title = L10n.text("保存录屏")
-        panel.nameFieldStringValue = "录屏-\(Self.fileTimestamp()).mov"
-        panel.allowedContentTypes = [.quickTimeMovie]
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let url = Self.uniqueOutputURL(in: directory)
         Task { @MainActor in await self.startRecording(to: url, displayID: selectedDisplayID, quality: quality) }
     }
 
@@ -140,6 +135,7 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         elapsedSeconds = 0
         isStopping = false
         do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let currentDisplay = content.displays.first(where: { $0.displayID == display.displayID }) else {
                 throw RecorderError.displayUnavailable
@@ -224,10 +220,17 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         status = message
     }
 
-    private static func fileTimestamp() -> String {
+    private static func uniqueOutputURL(in directory: URL) -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return formatter.string(from: Date())
+        let baseName = "录屏-\(formatter.string(from: Date()))"
+        var candidate = directory.appendingPathComponent(baseName).appendingPathExtension("mov")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("mov")
+            suffix += 1
+        }
+        return candidate
     }
 
     private enum RecorderError: LocalizedError {
@@ -277,45 +280,73 @@ extension ScreenRecorderModel: SCStreamOutput, SCStreamDelegate {
 struct ScreenRecorderView: View {
     @StateObject private var model = ScreenRecorderModel()
     @AppStorage("screenRecorder.quality") private var qualityRawValue = ScreenRecorderQuality.p1080.rawValue
+    @AppStorage("screenRecorder.outputDirectory") private var outputDirectoryPath = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
+    @AppStorage("screenRecorder.shortcut.keyCode") private var recorderShortcutKeyCode = 0
+    @AppStorage("screenRecorder.shortcut.modifiers") private var recorderShortcutModifiers = 0
 
     private var quality: ScreenRecorderQuality {
         ScreenRecorderQuality(rawValue: qualityRawValue) ?? .p1080
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
-                Image(systemName: "record.circle").font(.system(size: 32)).foregroundStyle(.red)
+        let _ = recorderShortcutKeyCode
+        let _ = recorderShortcutModifiers
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                Image(systemName: "record.circle.fill").font(.system(size: 38)).foregroundStyle(.red)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.text("录屏工具")).font(.title2.weight(.semibold))
                     Text(L10n.text("录制显示器画面和系统声音，并保存为 QuickTime 视频。"))
                         .font(.callout).foregroundStyle(.secondary)
-                    Text(L10n.text("快捷键：⌘⇧R 开始或停止录制"))
-                        .font(.caption).foregroundStyle(.secondary)
                 }
+                Spacer()
+                Label("\(DashboardWindow.screenRecorderShortcutTitle) · \(L10n.text("开始 / 停止"))", systemImage: "keyboard")
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(.quaternary, in: Capsule())
             }
 
-            GroupBox(L10n.text("录制来源")) {
-                HStack {
-                    Picker(L10n.text("显示器"), selection: $model.selectedDisplayID) {
-                        ForEach(model.displays) { option in
-                            Text(option.title).tag(Optional(option.id))
+            GroupBox(L10n.text("录制设置")) {
+                HStack(spacing: 18) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Picker(L10n.text("显示器"), selection: $model.selectedDisplayID) {
+                            ForEach(model.displays) { option in
+                                Text(option.title).tag(Optional(option.id))
+                            }
                         }
+                        .disabled(model.isRecording || model.displays.isEmpty)
+                        .frame(maxWidth: .infinity)
                     }
-                    .disabled(model.isRecording || model.displays.isEmpty)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Picker(L10n.text("清晰度"), selection: $qualityRawValue) {
+                            ForEach(ScreenRecorderQuality.allCases) { option in
+                                Text(option.title).tag(option.rawValue)
+                            }
+                        }
+                        .disabled(model.isRecording)
+                        .frame(maxWidth: .infinity)
+                    }
                     Button { model.refreshDisplays() } label: { Image(systemName: "arrow.clockwise") }
                         .help(L10n.text("刷新显示器列表"))
                         .disabled(model.isRecording)
                 }.padding(.top, 4)
             }
 
-            GroupBox(L10n.text("录制清晰度")) {
-                Picker(L10n.text("清晰度"), selection: $qualityRawValue) {
-                    ForEach(ScreenRecorderQuality.allCases) { option in
-                        Text(option.title).tag(option.rawValue)
-                    }
+            GroupBox(L10n.text("保存设置")) {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder").foregroundStyle(.secondary)
+                    Text(L10n.text("录屏保存位置"))
+                        .font(.callout.weight(.medium))
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(outputDirectoryPath)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 8)
+                    Button(L10n.text("更改…"), action: chooseOutputDirectory)
+                        .disabled(model.isRecording)
                 }
-                .disabled(model.isRecording)
                 .padding(.top, 4)
             }
 
@@ -326,11 +357,13 @@ struct ScreenRecorderView: View {
                         .font(.system(.body, design: .monospaced).weight(.semibold))
                     Spacer()
                     Button(role: .destructive) { model.stopRecording() } label: {
-                        Label(L10n.text("停止并保存"), systemImage: "stop.fill")
-                    }.keyboardShortcut(.return, modifiers: [.command])
+                        Label(L10n.text("停止录制"), systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
                 } else {
-                    Button { model.chooseOutputAndStart(quality: quality) } label: {
-                        Label(L10n.text("开始录制"), systemImage: "record.circle")
+                    Button { model.startRecording(in: outputDirectoryURL, quality: quality) } label: {
+                        Label(L10n.text("开始录制"), systemImage: "record.circle.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.displays.isEmpty)
@@ -354,11 +387,27 @@ struct ScreenRecorderView: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(minWidth: 680, minHeight: 360)
+        .frame(minWidth: 700, minHeight: 390)
         .onReceive(NotificationCenter.default.publisher(for: .screenRecorderShortcut)) { _ in
             if model.isRecording { model.stopRecording() }
-            else { model.chooseOutputAndStart(quality: quality) }
+            else { model.startRecording(in: outputDirectoryURL, quality: quality) }
         }
+    }
+
+    private var outputDirectoryURL: URL {
+        URL(fileURLWithPath: outputDirectoryPath, isDirectory: true)
+    }
+
+    private func chooseOutputDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = L10n.text("选择录屏保存位置")
+        panel.prompt = L10n.text("选择")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = outputDirectoryURL
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        outputDirectoryPath = url.path
     }
 
     private func duration(_ seconds: Int) -> String {

@@ -26,6 +26,7 @@ final class ProcessesModuleController: ModuleViewController, NSMenuDelegate {
 
     private var samplingGeneration = 0
     private var processRefreshInProgress = false
+    private var processContextMenuIsOpen = false
     private let samplingQueue = DispatchQueue(label: "com.laogu.ailock.process-page", qos: .utility)
     func stop() { samplingGeneration += 1; processTimer?.invalidate(); processTimer = nil; processNetworkMonitor.stop(); processRefreshInProgress = false }
     func resume() {
@@ -94,7 +95,7 @@ final class ProcessesModuleController: ModuleViewController, NSMenuDelegate {
     }
 
     @objc private func refreshProcesses(_ sender: Any?) {
-        guard !processRefreshInProgress else { return }
+        guard !processRefreshInProgress, !processContextMenuIsOpen else { return }
         processRefreshInProgress = true
         let request = samplingGeneration
         samplingQueue.async { [weak self] in
@@ -155,7 +156,9 @@ final class ProcessesModuleController: ModuleViewController, NSMenuDelegate {
     @objc private func processFilterChanged(_ sender: Any?) { updateProcessTable() }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === processContextMenu, let table = processTable else { return }
+        guard menu === processContextMenu else { return }
+        pauseProcessUpdatesForContextMenu()
+        guard let table = processTable else { return }
         let row = table.clickedRow
         if row >= 0 {
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -163,6 +166,26 @@ final class ProcessesModuleController: ModuleViewController, NSMenuDelegate {
         let process = (row >= 0 && (processTableDataSource?.entries.indices.contains(row) ?? false)) ? processTableDataSource?.entries[row] : nil
         let canAct = process.map { !$0.isProtected } ?? false
         menu.items.forEach { $0.isEnabled = canAct }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === processContextMenu else { return }
+        pauseProcessUpdatesForContextMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === processContextMenu else { return }
+        processContextMenuIsOpen = false
+        refreshProcesses(nil)
+    }
+
+    private func pauseProcessUpdatesForContextMenu() {
+        guard !processContextMenuIsOpen else { return }
+        processContextMenuIsOpen = true
+        // Drop any sample that started before the context menu opened. Its completion
+        // must not replace the row-to-process mapping while the menu is being used.
+        samplingGeneration += 1
+        processRefreshInProgress = false
     }
 
     @objc private func requestTerminateProcess(_ sender: Any?) {

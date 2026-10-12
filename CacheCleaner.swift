@@ -16,9 +16,19 @@ enum CacheCleaner {
         return entries.sorted { $0.size > $1.size }
     }
 
-    static func scanBatches(batchSize: Int = 8, onBatch: ([CacheEntry], Bool) -> Void) {
+    static func scanBatches(isSystem: Bool = false, batchSize: Int = 8, onBatch: ([CacheEntry], Bool) -> Void) {
         let manager = FileManager.default
-        guard let root = manager.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+        let root: URL
+        if isSystem {
+            root = URL(fileURLWithPath: "/Library/Caches", isDirectory: true)
+        } else if let userRoot = manager.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            root = userRoot
+        } else {
+            onBatch([], true)
+            return
+        }
+        guard let rootValues = try? root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
             onBatch([], true)
             return
         }
@@ -27,7 +37,7 @@ enum CacheCleaner {
         for child in children {
             guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
                   values.isDirectory == true, values.isSymbolicLink != true else { continue }
-            batch.append(CacheEntry(id: child, name: child.lastPathComponent, size: directorySize(child), isSystem: false, url: child))
+            batch.append(CacheEntry(id: child, name: child.lastPathComponent, size: directorySize(child), isSystem: isSystem, url: child))
             if batch.count >= batchSize {
                 onBatch(batch.sorted { $0.size > $1.size }, false)
                 batch.removeAll(keepingCapacity: true)
@@ -37,18 +47,20 @@ enum CacheCleaner {
     }
 
     static func prepare(_ entries: [CacheEntry]) -> FileOperationPlan {
-        let root = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches", isDirectory: true)
+        let userRoot = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches", isDirectory: true)
+        let systemRoot = URL(fileURLWithPath: "/Library/Caches", isDirectory: true)
         var urls: [URL] = []
         var rejected: [FileActionResult] = []
         for entry in entries {
-            guard !entry.isSystem, ApplicationLocations.contains(entry.url, in: root),
+            let root = entry.isSystem ? systemRoot : userRoot
+            guard ApplicationLocations.contains(entry.url, in: root),
                   let identity = FileIdentity(entry.url), !identity.isSymlink else {
-                rejected.append(FileActionResult(url: entry.url, destination: nil, error: "缓存目录不在允许范围内")); continue
+                rejected.append(FileActionResult(url: entry.url, destination: nil, error: "缓存目录不在允许范围内或为符号链接")); continue
             }
             do { urls += try FileManager.default.contentsOfDirectory(at: entry.url, includingPropertiesForKeys: nil) }
             catch { rejected.append(FileActionResult(url: entry.url, destination: nil, error: error.localizedDescription)) }
         }
-        let plan = FileOperationPlan.prepare(urls: urls, roots: [root])
+        let plan = FileOperationPlan.prepare(urls: urls, roots: [userRoot, systemRoot])
         return FileOperationPlan(items: plan.items, rejected: plan.rejected + rejected)
     }
 

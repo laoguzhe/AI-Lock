@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Metal
 
 struct InstalledApplication: Identifiable {
     let url: URL
@@ -414,22 +415,35 @@ enum StartupItemInspector {
 
 // Short, local benchmarks run once when the Mac health view first opens.
 enum HardwareBenchmark: String, CaseIterable, Identifiable, Sendable {
-    case disk, memory
+    case disk, memory, localAI
     var id: String { rawValue }
     var title: String {
-        switch self { case .disk: return "硬盘读写测试"; case .memory: return "内存读写测试" }
+        switch self {
+        case .disk: return "硬盘读写测试"
+        case .memory: return "内存读写测试"
+        case .localAI: return "本地 AI 能力"
+        }
     }
     var symbol: String {
-        switch self { case .disk: return "internaldrive"; case .memory: return "memorychip" }
+        switch self {
+        case .disk: return "internaldrive"
+        case .memory: return "memorychip"
+        case .localAI: return "cpu"
+        }
     }
     var detail: String {
         switch self {
         case .disk: return "在临时目录顺序读写 256 MiB，结束后自动删除。结果受文件系统与缓存影响。"
         case .memory: return "使用两个 32 MiB 缓冲区测试写入与复制带宽，包含 CPU 与缓存影响。"
+        case .localAI: return "运行短时 CPU 与 Metal GPU 计算基准，并按系统内存估算可装载的量化模型规模。实际速度与模型、上下文长度和运行时有关。"
         }
     }
     func run() throws -> [(String, String)] {
-        switch self { case .disk: return try disk(); case .memory: return try memory() }
+        switch self {
+        case .disk: return try disk()
+        case .memory: return try memory()
+        case .localAI: return try LocalAIHardwareBenchmark.run()
+        }
     }
     private func rate(_ bytes: Int, since start: UInt64) -> String {
         let seconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
@@ -496,5 +510,104 @@ enum HardwareBenchmark: String, CaseIterable, Identifiable, Sendable {
         }
         guard target.load(as: UInt8.self) == UInt8(iterations - 1) else { throw POSIXError(.EIO) }
         return [("内存写入", writeRate), ("内存复制（读取＋写入）", rate(bytes * iterations, since: copyStart)), ("校验值", String(checksum))]
+    }
+}
+
+private enum LocalAIHardwareBenchmark {
+    private static let itemCount = 262_144
+    private static let memoryBudgetRatio = 0.72
+
+    static func run() throws -> [(String, String)] {
+        try Task.checkCancellation()
+        let cpuRate = try cpuThroughput()
+        try Task.checkCancellation()
+        let gpu = gpuThroughput()
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        // Reserve memory for macOS, the application, and the model's KV cache.
+        let modelBudgetGB = Double(totalMemory) * memoryBudgetRatio / 1_000_000_000
+        let fourBit = Int(modelBudgetGB / 1.0)
+        let eightBit = Int(modelBudgetGB / 1.5)
+        let fp16 = Int(modelBudgetGB / 2.5)
+        return [
+            ("CPU计算", cpuRate),
+            ("GPU设备", gpu.name),
+            ("GPU计算", gpu.rate),
+            ("系统内存", ByteCountFormatter.string(fromByteCount: Int64(totalMemory), countStyle: .memory)),
+            ("4-bit模型", L10n.format("约 %{0}B 参数", arguments: [String(fourBit)])),
+            ("8-bit模型", L10n.format("约 %{0}B 参数", arguments: [String(eightBit)])),
+            ("FP16模型", L10n.format("约 %{0}B 参数", arguments: [String(fp16)]))
+        ]
+    }
+
+    private static func cpuThroughput() throws -> String {
+        let iterations = 64
+        var a = [SIMD4<Float>](repeating: SIMD4(1, 2, 3, 4), count: itemCount / 4)
+        let b = [SIMD4<Float>](repeating: SIMD4(0.25, 0.5, 0.75, 1), count: itemCount / 4)
+        var checksum: Float = 0
+        let start = DispatchTime.now().uptimeNanoseconds
+        for iteration in 0..<iterations {
+            try Task.checkCancellation()
+            let scale = Float(iteration + 1)
+            for index in a.indices {
+                a[index] = a[index] * b[index] + SIMD4(repeating: scale)
+            }
+            checksum += a[iteration % a.count].x
+        }
+        guard checksum.isFinite else { throw POSIXError(.EIO) }
+        let seconds = max(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000, 0.000001)
+        let operations = Double(itemCount) * Double(iterations) * 2
+        return String(format: "%.1f GFLOP/s", operations / seconds / 1_000_000_000)
+    }
+
+    private static func gpuThroughput() -> (name: String, rate: String) {
+        guard let device = MTLCreateSystemDefaultDevice(),
+              let queue = device.makeCommandQueue(),
+              let library = try? device.makeLibrary(source: """
+                #include <metal_stdlib>
+                using namespace metal;
+                kernel void ailockCompute(device float *values [[buffer(0)]],
+                                           constant uint &count [[buffer(1)]],
+                                           uint index [[thread_position_in_grid]]) {
+                    if (index < count) {
+                        float value = values[index];
+                        for (uint i = 0; i < 128; i++) {
+                            value = fma(value, 1.000001f, 0.000001f);
+                        }
+                        values[index] = value;
+                    }
+                }
+                """, options: nil),
+              let function = library.makeFunction(name: "ailockCompute"),
+              let pipeline = try? device.makeComputePipelineState(function: function),
+              let values = device.makeBuffer(length: itemCount * MemoryLayout<Float>.size, options: .storageModeShared),
+              let count = device.makeBuffer(length: MemoryLayout<UInt32>.size, options: .storageModeShared) else {
+            return (MTLCreateSystemDefaultDevice()?.name ?? "GPU 不可用", "不可用")
+        }
+
+        values.contents().bindMemory(to: Float.self, capacity: itemCount).initialize(repeating: 1, count: itemCount)
+        count.contents().bindMemory(to: UInt32.self, capacity: 1).pointee = UInt32(itemCount)
+        let iterations = 8
+        let start = DispatchTime.now().uptimeNanoseconds
+        var lastCommand: MTLCommandBuffer?
+        for _ in 0..<iterations {
+            guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
+                return (device.name, "不可用")
+            }
+            encoder.setComputePipelineState(pipeline)
+            encoder.setBuffer(values, offset: 0, index: 0)
+            encoder.setBuffer(count, offset: 0, index: 1)
+            let width = min(pipeline.threadExecutionWidth * 8, itemCount)
+            encoder.dispatchThreads(MTLSize(width: itemCount, height: 1, depth: 1),
+                                    threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
+            encoder.endEncoding()
+            lastCommand = command
+            command.commit()
+        }
+        // Wait for the final submitted work before stopping the timer.
+        lastCommand?.waitUntilCompleted()
+        guard lastCommand?.status == .completed else { return (device.name, "不可用") }
+        let seconds = max(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000, 0.000001)
+        let operations = Double(itemCount) * Double(iterations) * 128 * 2
+        return (device.name, String(format: "%.1f GFLOP/s", operations / seconds / 1_000_000_000))
     }
 }
