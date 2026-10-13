@@ -3,3 +3,9 @@ build/
 
 .build/
 .swiftpm/
+
+# Personal development planning notes
+/开发计划.md
+
+# Runtime watch data created by local test runs
+/tests/.watch-*/

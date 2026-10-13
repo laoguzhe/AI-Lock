@@ -1,3 +1,7 @@
+<p align="center"><img src="icon.png" alt="AI Lock logo" width="128"></p>
+
+<p align="center"><a href="README.md">简体中文</a> | <a href="README_EN.md">English</a></p>
+
 # AI Lock
 
 AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，集合系统监控、网络诊断、文件与剪贴板管理、快捷启动和多显示器辅助功能。支持 macOS 14 或更高版本，发行包面向 Apple silicon 和 Intel Mac。
@@ -12,6 +16,10 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 > 仓库当前为 Private，只有获授权的 GitHub 用户可以访问上述下载链接。仓库公开并创建对应 Release 后，链接才可供所有人下载。
 
 ## 功能详解
+
+![AI Lock 功能模块总览](docs/images/features-overview.png)
+
+上图为主要模块入口；实时资源数值已从截图中裁去。
 
 ### 系统监控与维护
 
@@ -49,6 +57,9 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 ### 屏幕、显示器与菜单栏
 
 - **屏幕录制**：选择显示器、清晰度和保存目录，录制屏幕画面与系统声音，输出 MOV 文件；录制中可查看时长并停止。需在 macOS“隐私与安全性”中允许屏幕与系统录音。录屏快捷键可在设置中配置。
+
+![录屏工具设置界面。示例路径已替换；实际录制需要授予屏幕与系统录音权限。](docs/images/screen-recorder.png)
+
 - **显示器亮度**：可选模块，向部分 Apple Silicon Mac 识别到的外接 DDC 通道发送统一亮度值；不读取当前亮度。Intel Mac 和部分 HDMI、扩展坞组合不支持。
 - **DockLock**：在多显示器环境中限制指针从非目标屏幕边缘进入目标屏幕，并在空闲时将 Dock 指针带回目标屏幕；真实鼠标移动会取消正在进行的回弹。需要辅助功能权限。
 - **菜单栏收纳**：把不常用菜单栏图标折叠到箭头左侧，并展开查看；可设置展开后的自动收起行为。详见[菜单栏收纳说明](docs/menu-bar-organizer.md)。
