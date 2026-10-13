@@ -105,7 +105,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             .map(String.init)
         var active = statusAlerts.evaluate(sample)
         if Date() < alertPreviewUntil { active.formUnion(ResourceAlerts.Metric.allCases) }
-        if active.isEmpty {
+        let networkSelected = selected.contains("network") || selected.contains("networkUpload") || selected.contains("networkDownload")
+        let selectableMetrics: Set<ResourceAlerts.Metric> = [.cpu, .memory, .disk, .network]
+        let visibleMetrics = ResourceAlerts.Metric.allCases.filter {
+            selected.contains($0.rawValue)
+                || ($0 == .network && networkSelected)
+                || (!selectableMetrics.contains($0) && active.contains($0))
+        }
+        let visibleAlerts = active.intersection(Set(visibleMetrics))
+        if visibleAlerts.isEmpty {
             alertBlinkTimer?.invalidate()
             alertBlinkTimer = nil
             alertBlinkBright = true
@@ -120,10 +128,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             RunLoop.main.add(timer, forMode: .common)
         }
         var items: [NSAttributedString] = []
-        let networkSelected = selected.contains("network") || selected.contains("networkUpload") || selected.contains("networkDownload")
-        let visibleMetrics = ResourceAlerts.Metric.allCases.filter {
-            selected.contains($0.rawValue) || ($0 == .network && networkSelected) || active.contains($0)
-        }
         for metric in visibleMetrics {
             let isAlert = active.contains(metric)
             let symbol: String
@@ -390,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
     }
 
     @objc private func openSettingsFromStatusMenu(_ sender: NSMenuItem) {
-        DashboardWindow.openPreferences(section: "通用")
+        DashboardWindow.openPreferences(section: "通用设置")
     }
 
     @objc private func openHelpFromStatusMenu(_ sender: NSMenuItem) {

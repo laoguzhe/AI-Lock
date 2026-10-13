@@ -1457,7 +1457,7 @@ struct DashboardOverviewView: View {
         let _ = localizationFollowsSystem
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                TextField(L10n.text(english ? "Search apps, files or folders" : L10n.text("搜索应用、文件或文件夹")), text: $query)
+                TextField(L10n.text(english ? "Press ⌘ twice to open Quick Search" : L10n.text("按 ⌘ 两次打开快捷搜索")), text: $query)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 10)
                     .frame(height: 32)
@@ -2183,8 +2183,8 @@ private final class PreferencesWindowController: NSWindowController {
 private struct PreferencesWindowView: View {
     @AppStorage("overview.language") private var localizationEnglish = false
     @AppStorage("overview.followSystemLanguage") private var localizationFollowsSystem = true
-    private let sections = ["通用", "菜单栏收纳", "系统扩展", "监控预警", "DockLock", "首页图标", "快捷键", "帮助/关于"]
-    @AppStorage("preferences.selectedSection") private var selection = "通用"
+    private let sections = ["通用设置", "菜单栏收纳", "系统扩展", "监控预警", "DockLock", "首页图标", "快捷键", "帮助/关于"]
+    @AppStorage("preferences.selectedSection") private var selection = "通用设置"
     @AppStorage("overview.language") private var selectedEnglish = false
     @AppStorage("overview.followSystemLanguage") private var followSystemLanguage = true
     @AppStorage("appearance.mode") private var appearanceMode = "system"
@@ -2245,7 +2245,10 @@ private struct PreferencesWindowView: View {
         }
         .onChange(of: statusMetricsRaw) { _, _ in NotificationCenter.default.post(name: .statusMetricsChanged, object: nil) }
         .onChange(of: english) { _, _ in NotificationCenter.default.post(name: .statusMetricsChanged, object: nil); NotificationCenter.default.post(name: L10n.changed, object: nil) }
-        .onAppear { applyAppearance() }
+        .onAppear {
+            if selection == "通用" { selection = "通用设置" }
+            applyAppearance()
+        }
         .onChange(of: appearanceMode) { _, _ in
             applyAppearance()
             NotificationCenter.default.post(name: .appearanceModeChanged, object: nil)
@@ -2272,7 +2275,7 @@ private struct PreferencesWindowView: View {
         switch selection {
         case "菜单栏收纳":
             MenuBarOrganizerSettingsView()
-        case "通用":
+        case "通用设置":
             Picker(L10n.text(english ? "Language" : L10n.text("语言")), selection: languageSelection) {
                 Text(L10n.text("中文")).tag("zh")
                 Text("English").tag("en")
@@ -2460,7 +2463,7 @@ private struct PreferencesWindowView: View {
         NotificationCenter.default.post(name: .resourceAlertPreview, object: nil)
     }
 
-    private func symbol(for section: String) -> String { ["通用": "slider.horizontal.3", "菜单栏收纳": "menubar.rectangle", "监控预警": "bell.badge", "DockLock": "dock.rectangle", "首页图标": "square.grid.2x2", "快捷键": "keyboard", "帮助/关于": "info.circle"] [section] ?? "gearshape" }
+    private func symbol(for section: String) -> String { ["通用设置": "slider.horizontal.3", "菜单栏收纳": "menubar.rectangle", "监控预警": "bell.badge", "DockLock": "dock.rectangle", "首页图标": "square.grid.2x2", "快捷键": "keyboard", "帮助/关于": "info.circle"] [section] ?? "gearshape" }
     private func englishTitle(_ section: String) -> String { L10n.text(section) }
 }
 

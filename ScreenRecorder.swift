@@ -44,7 +44,11 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
     struct DisplayOption: Identifiable {
         let display: SCDisplay
         var id: UInt32 { display.displayID }
-        var title: String { "显示器 \(id) · \(display.width) × \(display.height)" }
+        var title: String {
+            NSScreen.screens.first {
+                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
+            }?.localizedName ?? L10n.text("显示器")
+        }
     }
 
     @Published private(set) var displays: [DisplayOption] = []
@@ -80,7 +84,7 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
                 if !options.contains(where: { $0.id == self.selectedDisplayID }) {
                     selectedDisplayID = options.first?.id
                 }
-                status = options.isEmpty ? "没有找到可录制的显示器。" : "就绪。录制将保存到设置的位置。"
+                status = options.isEmpty ? "没有找到可录制的显示器。" : ""
             } catch {
                 displays = []
                 status = "无法读取显示器：\(error.localizedDescription)"
@@ -342,11 +346,11 @@ struct ScreenRecorderView: View {
                 } else {
                     Button { model.startRecording(in: outputDirectoryURL, quality: quality) } label: {
                         Label(L10n.text("开始录制"), systemImage: "record.circle.fill")
-                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
                     .controlSize(.large)
+                    .containerRelativeFrame(.horizontal, count: 4, spacing: 0, alignment: .leading)
                     .disabled(model.displays.isEmpty)
                 }
 
