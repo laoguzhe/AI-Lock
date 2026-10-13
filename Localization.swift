@@ -1462,6 +1462,7 @@ enum L10n {
         "策略已保存": "Policy saved",
         "策略保存失败：%{0}": "Could not save policy: %{0}",
         "开始 / 停止": "Start / Stop",
+        "截屏快捷键：Shift + Command + 4 截图保存在桌面": "Screenshot shortcut: Shift + Command + 4 saves the screenshot to the desktop",
         "添加剪贴板备注": "Add Clipboard Note",
         "编辑剪贴板备注": "Edit Clipboard Note",
         "设置备份口令": "Set Backup Passphrase",

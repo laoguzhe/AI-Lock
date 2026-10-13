@@ -358,6 +358,10 @@ struct ScreenRecorderView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Text(L10n.text("截屏快捷键：Shift + Command + 4 截图保存在桌面"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 if !model.status.isEmpty {
                     Text(model.status)
                         .font(.caption)

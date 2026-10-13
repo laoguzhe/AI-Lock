@@ -1,4 +1,4 @@
-MIT License
+Modified MIT License with Source Attribution
 
 Copyright (c) 2026 gu lao
 
@@ -9,8 +9,16 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice, this permission notice, and the source
+   attribution below must be included in all copies or substantial portions
+   of the Software, including source and binary redistributions.
+
+   Source attribution: "Based on AI Lock by 老谷:
+   https://github.com/laoguzhe/AI-Lock"
+
+2. If you distribute a modified version, you must clearly identify it as
+   modified and include a brief description of your changes alongside the
+   source attribution.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

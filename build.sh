@@ -7,7 +7,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-APP="build/AILock.app"
+BUILD_DIR="${BUILD_DIR:-build}"
+APP="$BUILD_DIR/AILock.app"
 
 RELEASE=0
 [[ "${1:-}" == "--release" ]] && RELEASE=1
@@ -23,12 +24,12 @@ CUSTOM_ICON=""
 if [[ -f icon.png ]]; then
 	CUSTOM_ICON="$(mktemp /tmp/ailock-icon.XXXXXX)"
 	cp icon.png "$CUSTOM_ICON"
-elif [[ -f build/icon.png ]]; then
+elif [[ -f "$BUILD_DIR/icon.png" ]]; then
 	CUSTOM_ICON="$(mktemp /tmp/ailock-icon.XXXXXX)"
-	cp build/icon.png "$CUSTOM_ICON"
+	cp "$BUILD_DIR/icon.png" "$CUSTOM_ICON"
 fi
 
-rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+rm -rf "$BUILD_DIR" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 SOURCES=(NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AgentHooks.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
 # Compile a fixed source snapshot when other development tasks edit the workspace.
@@ -49,7 +50,7 @@ fi
 BINARIES=()
 for arch in $ARCHS; do
     [[ "$arch" == "arm64" || "$arch" == "x86_64" ]] || { echo "Unsupported architecture: $arch" >&2; exit 1; }
-    binary="build/AILock-$arch"
+	binary="$BUILD_DIR/AILock-$arch"
     swiftc -O -swift-version 5 -target "$arch-apple-macos14.0" -o "$binary" "${SNAPSHOT_SOURCES[@]}"
     BINARIES+=("$binary")
 done
@@ -60,23 +61,24 @@ else
 fi
 
 cp -R Resources/NetworkDiagnostics "$APP/Contents/Resources/NetworkDiagnostics"
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 
 # Use the supplied PNG if present; otherwise generate the default app icon.
 if [[ -n "$CUSTOM_ICON" ]]; then
-	cp "$CUSTOM_ICON" build/icon.png
+	cp "$CUSTOM_ICON" "$BUILD_DIR/icon.png"
 	rm -f "$CUSTOM_ICON"
 else
-	swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" -o build/makeicon makeicon.swift
-	build/makeicon build/icon.png >/dev/null
+	swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" -o "$BUILD_DIR/makeicon" makeicon.swift
+	"$BUILD_DIR/makeicon" "$BUILD_DIR/icon.png" >/dev/null
 fi
-ICONSET=build/AILock.iconset
+ICONSET="$BUILD_DIR/AILock.iconset"
 mkdir -p "$ICONSET"
 for sz in 16 32 128 256 512; do
-	sips -z $sz $sz build/icon.png --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
-	sips -z $((sz*2)) $((sz*2)) build/icon.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+	sips -z $sz $sz "$BUILD_DIR/icon.png" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+	sips -z $((sz*2)) $((sz*2)) "$BUILD_DIR/icon.png" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-cp build/icon.png "$APP/Contents/Resources/StatusIcon.png"
+cp "$BUILD_DIR/icon.png" "$APP/Contents/Resources/StatusIcon.png"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

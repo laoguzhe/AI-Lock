@@ -16,9 +16,10 @@ VERSION="${VERSION:-1.2}"
 BUILD_NUM="${BUILD_NUM:-3}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 PROFILE="${NOTARY_PROFILE:-docklock-notary}"
+BUILD_DIR="${BUILD_DIR:-build}"
 
-APP="build/AILock.app"
-DMG="build/AILock-$VERSION.dmg"
+APP="$BUILD_DIR/AILock.app"
+DMG="$BUILD_DIR/AILock-$VERSION.dmg"
 
 # 早失败：凭据没存就别白编译一遍
 if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
@@ -33,20 +34,20 @@ EOF
 	exit 1
 fi
 
-VERSION="$VERSION" BUILD_NUM="$BUILD_NUM" SIGN_ID="$SIGN_ID" ./build.sh --release
+VERSION="$VERSION" BUILD_NUM="$BUILD_NUM" SIGN_ID="$SIGN_ID" BUILD_DIR="$BUILD_DIR" ./build.sh --release
 
 # ---- 第一轮：公证 .app 本体 ----
 # notarytool 不吃 .app 目录，必须先压成 zip；用 ditto -c -k --keepParent 才能保住签名结构
 echo "📦 打包 .app 送公证…"
-ditto -c -k --keepParent "$APP" build/AILock.zip
-xcrun notarytool submit build/AILock.zip --keychain-profile "$PROFILE" --wait
+ditto -c -k --keepParent "$APP" "$BUILD_DIR/AILock.zip"
+xcrun notarytool submit "$BUILD_DIR/AILock.zip" --keychain-profile "$PROFILE" --wait
 
 # 把公证票据写进 .app 自身。少了这步，用户从 DMG 拖出来的 App 在离线时首次启动会被拦。
 xcrun stapler staple "$APP"
 
 # ---- 打 DMG ----
 echo "💿 生成 DMG…"
-STAGE=build/dmg
+STAGE="$BUILD_DIR/dmg"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"     # 拖拽安装的那个快捷方式
