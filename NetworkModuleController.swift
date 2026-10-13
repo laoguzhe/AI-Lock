@@ -267,6 +267,111 @@ final class NetworkModuleController: ModuleViewController {
     deinit { timer?.invalidate(); traffic.stop() }
 }
 
+private struct NetworkFilterMenu: NSViewRepresentable {
+    @ObservedObject var model: NetworkActivityModel
+    let scopes: [String]
+
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: true)
+        button.controlSize = .regular
+        button.bezelStyle = .rounded
+        button.font = .systemFont(ofSize: NSFont.systemFontSize)
+        context.coordinator.button = button
+        context.coordinator.rebuildMenu(scopes: scopes)
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.model = model
+        context.coordinator.button = button
+        context.coordinator.scopes = scopes
+        if !context.coordinator.menuOpen {
+            context.coordinator.rebuildMenu(scopes: scopes)
+        }
+    }
+
+    final class Coordinator: NSObject, NSMenuDelegate {
+        var model: NetworkActivityModel
+        weak var button: NSPopUpButton?
+        var scopes: [String] = []
+        var menuOpen = false
+
+        init(model: NetworkActivityModel) { self.model = model }
+
+        func rebuildMenu(scopes: [String]) {
+            self.scopes = scopes
+            guard let button else { return }
+
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            menu.delegate = self
+            var selectedFilters: [String] = []
+            let query = model.search.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty { selectedFilters.append(L10n.format("搜索：%{0}", arguments: [query])) }
+            if model.period != "当前连接" { selectedFilters.append(L10n.format("记录：%{0}", arguments: [L10n.text(model.period)])) }
+            if model.app != "所有应用" { selectedFilters.append(L10n.format("应用：%{0}", arguments: [model.app])) }
+            if model.proto != "所有协议" { selectedFilters.append(L10n.format("协议：%{0}", arguments: [model.proto])) }
+            if model.scope != "所有范围" { selectedFilters.append(L10n.format("范围：%{0}", arguments: [L10n.text(model.scope)])) }
+            if model.sort != "最近变化" { selectedFilters.append(L10n.format("排序：%{0}", arguments: [L10n.text(model.sort)])) }
+            let title = ([L10n.text("筛选")] + selectedFilters).joined(separator: " · ")
+            let titleItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            titleItem.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: nil)
+            menu.addItem(titleItem)
+
+            addSubmenu("显示记录", values: ["当前连接", "最近变化", "全部记录"], selected: model.period, key: "period", to: menu)
+            addSubmenu("应用", values: ["所有应用"] + model.apps, selected: model.app, key: "app", to: menu)
+            addSubmenu("协议", values: ["所有协议", "TCP", "UDP"], selected: model.proto, key: "proto", to: menu)
+            addSubmenu("网络范围", values: scopes, selected: model.scope, key: "scope", to: menu)
+            addSubmenu("排序方式", values: ["最近变化", "应用名称", "远端地址", "观测时长"], selected: model.sort, key: "sort", to: menu)
+
+            button.menu = menu
+            button.selectItem(at: 0)
+        }
+
+        private func addSubmenu(_ title: String, values: [String], selected: String, key: String, to menu: NSMenu) {
+            let parent = NSMenuItem(title: L10n.text(title), action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            for value in values {
+                let item = NSMenuItem(title: L10n.text(value), action: #selector(selectFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = "\(key)\u{1F}\(value)" as NSString
+                item.state = value == selected ? .on : .off
+                submenu.addItem(item)
+            }
+            parent.submenu = submenu
+            menu.addItem(parent)
+        }
+
+        @objc private func selectFilter(_ sender: NSMenuItem) {
+            guard let payload = sender.representedObject as? String else { return }
+            let parts = payload.components(separatedBy: "\u{1F}")
+            guard parts.count == 2 else { return }
+            switch parts[0] {
+            case "period": model.period = parts[1]
+            case "app": model.app = parts[1]
+            case "proto": model.proto = parts[1]
+            case "scope": model.scope = parts[1]
+            case "sort": model.sort = parts[1]
+            default: break
+            }
+        }
+
+        func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
+
+        func menuDidClose(_ menu: NSMenu) {
+            menuOpen = false
+            // Model changes refresh the visible selection and count after the native menu closes.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.rebuildMenu(scopes: self.scopes)
+            }
+        }
+    }
+}
+
 private struct NetworkActivityView: View {
     @AppStorage("overview.language") private var localizationEnglish = false
     @AppStorage("overview.followSystemLanguage") private var localizationFollowsSystem = true
@@ -278,23 +383,12 @@ private struct NetworkActivityView: View {
         VStack(alignment: .leading, spacing: 10) {
             overview
             trafficDashboard
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
                 TextField(L10n.text("搜索应用、PID、IP、端口或服务"), text: $model.search)
-                    .textFieldStyle(.roundedBorder).frame(width: L10n.isEnglish ? 260 : 220)
-                Picker("", selection: $model.period) { ForEach(["当前连接", "最近变化", "全部记录"], id: \.self) { Text(L10n.text($0)) } }
-                    .pickerStyle(.segmented).frame(width: L10n.isEnglish ? 270 : 220)
-                Picker("", selection: $model.app) { Text(L10n.text("所有应用")).tag("所有应用"); ForEach(model.apps, id: \.self) { Text($0).tag($0) } }
-                    .labelsHidden().frame(width: L10n.isEnglish ? 170 : 140)
-                Picker("", selection: $model.proto) { ForEach(["所有协议", "TCP", "UDP"], id: \.self) { Text(L10n.text($0)) } }
-                    .labelsHidden().frame(width: L10n.isEnglish ? 135 : 105)
-                Picker("", selection: $model.scope) { ForEach(scopes, id: \.self) { Text(L10n.text($0)) } }
-                    .labelsHidden().frame(width: L10n.isEnglish ? 135 : 105)
-                Picker("", selection: $model.sort) { ForEach(["最近变化", "应用名称", "远端地址", "观测时长"], id: \.self) { Text(L10n.text($0)) } }
-                    .labelsHidden().frame(width: L10n.isEnglish ? 170 : 135)
-            }
-            HStack(spacing: 4) {
+                    .textFieldStyle(.roundedBorder).frame(minWidth: 180, maxWidth: .infinity)
+                filterMenu
                 Toggle(L10n.text("按应用分组"), isOn: $model.grouped).toggleStyle(.checkbox)
-                Button(L10n.text("重置筛选")) { model.search = ""; model.app = "所有应用"; model.proto = "所有协议"; model.scope = "所有范围"; model.period = "当前连接" }
+                Button(L10n.text("重置筛选")) { model.search = ""; model.app = "所有应用"; model.proto = "所有协议"; model.scope = "所有范围"; model.period = "当前连接"; model.sort = "最近变化" }
                 Button { model.export() } label: { Label(L10n.text("导出"), systemImage: "square.and.arrow.up") }.disabled(model.visible.isEmpty)
             }
             if model.grouped { groupedList } else { connectionTable }
@@ -312,6 +406,12 @@ private struct NetworkActivityView: View {
         .padding(.horizontal, 12).padding(.top, 0).padding(.bottom, 0)
         .frame(minWidth: 700, minHeight: 430, maxHeight: .infinity, alignment: .topLeading)
         .sheet(item: $model.detail) { record in NetworkConnectionDetail(record: record, model: model) }
+    }
+    private var filterMenu: some View {
+        NetworkFilterMenu(
+            model: model,
+            scopes: scopes
+        )
     }
     private var overview: some View {
         let active = model.all.filter(\.active)
@@ -506,7 +606,7 @@ private struct NetworkConnectionDetail: View {
             }
             HStack {
                 Button(L10n.text("复制远端")) { model.copy(current.connection.remote) }
-                Button(L10n.text("复制详情")) { model.copy("\(current.connection.process) (PID \(current.connection.pid))\n\(current.connection.protocolName) \(current.connection.local) → \(current.connection.remote)\n状态：\(current.connection.state)\n首次发现：\(current.firstSeen)\n最后发现：\(current.lastSeen)\n\(current.changes.joined(separator: "\n"))") }
+                Button(L10n.text("复制详情")) { model.copy("\(current.connection.process) (PID \(current.connection.pid))\n\(current.connection.protocolName) \(current.connection.local) → \(current.connection.remote)\n\(L10n.text("状态："))\(L10n.text(current.connection.state))\n\(L10n.text("首次发现："))\(current.firstSeen)\n\(L10n.text("最后发现："))\(current.lastSeen)\n\(current.changes.map { L10n.text($0) }.joined(separator: "\n"))") }
                 Button(L10n.text("在 Finder 查看进程文件")) { if let path = executablePath { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } }.disabled(executablePath == nil)
             }
         }.padding(20).frame(width: 620, height: 500)

@@ -291,107 +291,107 @@ struct ScreenRecorderView: View {
     var body: some View {
         let _ = recorderShortcutKeyCode
         let _ = recorderShortcutModifiers
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "record.circle.fill").font(.system(size: 38)).foregroundStyle(.red)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("录屏工具")).font(.title2.weight(.semibold))
-                    Text(L10n.text("录制显示器画面和系统声音，并保存为 QuickTime 视频。"))
-                        .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            settingRow(L10n.text("显示器")) {
+                Picker(L10n.text("显示器"), selection: $model.selectedDisplayID) {
+                    ForEach(model.displays) { option in
+                        Text(option.title).tag(Optional(option.id))
+                    }
                 }
-                Spacer()
-                Label("\(DashboardWindow.screenRecorderShortcutTitle) · \(L10n.text("开始 / 停止"))", systemImage: "keyboard")
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(.quaternary, in: Capsule())
+                .labelsHidden()
+                .disabled(model.isRecording || model.displays.isEmpty)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox(L10n.text("录制设置")) {
-                HStack(spacing: 18) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Picker(L10n.text("显示器"), selection: $model.selectedDisplayID) {
-                            ForEach(model.displays) { option in
-                                Text(option.title).tag(Optional(option.id))
-                            }
-                        }
-                        .disabled(model.isRecording || model.displays.isEmpty)
-                        .frame(maxWidth: .infinity)
+            settingRow(L10n.text("清晰度")) {
+                Picker(L10n.text("清晰度"), selection: $qualityRawValue) {
+                    ForEach(ScreenRecorderQuality.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
                     }
-                    VStack(alignment: .leading, spacing: 7) {
-                        Picker(L10n.text("清晰度"), selection: $qualityRawValue) {
-                            ForEach(ScreenRecorderQuality.allCases) { option in
-                                Text(option.title).tag(option.rawValue)
-                            }
-                        }
-                        .disabled(model.isRecording)
-                        .frame(maxWidth: .infinity)
-                    }
-                    Button { model.refreshDisplays() } label: { Image(systemName: "arrow.clockwise") }
-                        .help(L10n.text("刷新显示器列表"))
-                        .disabled(model.isRecording)
-                }.padding(.top, 4)
+                }
+                .labelsHidden()
+                .disabled(model.isRecording)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            GroupBox(L10n.text("保存设置")) {
-                HStack(spacing: 12) {
-                    Image(systemName: "folder").foregroundStyle(.secondary)
-                    Text(L10n.text("录屏保存位置"))
-                        .font(.callout.weight(.medium))
-                        .fixedSize(horizontal: true, vertical: false)
+            settingRow(L10n.text("保存位置")) {
+                HStack(spacing: 8) {
                     Text(outputDirectoryPath)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Spacer(minLength: 8)
                     Button(L10n.text("更改…"), action: chooseOutputDirectory)
                         .disabled(model.isRecording)
                 }
-                .padding(.top, 4)
             }
 
-            HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 if model.isRecording {
-                    Circle().fill(.red).frame(width: 9, height: 9)
-                    Text("\(L10n.text("录制中"))  \(duration(model.elapsedSeconds))")
-                        .font(.system(.body, design: .monospaced).weight(.semibold))
-                    Spacer()
-                    Button(role: .destructive) { model.stopRecording() } label: {
-                        Label(L10n.text("停止录制"), systemImage: "stop.fill")
+                    HStack(spacing: 10) {
+                        Text("\(L10n.text("录制中"))  \(duration(model.elapsedSeconds))")
+                            .font(.system(.body, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.red)
+                        Button(role: .destructive) { model.stopRecording() } label: {
+                            Label(L10n.text("停止录制"), systemImage: "stop.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
                 } else {
                     Button { model.startRecording(in: outputDirectoryURL, quality: quality) } label: {
                         Label(L10n.text("开始录制"), systemImage: "record.circle.fill")
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.large)
                     .disabled(model.displays.isEmpty)
-                    Spacer()
+                }
+
+                Label("\(DashboardWindow.screenRecorderShortcutTitle) · \(L10n.text("开始 / 停止"))", systemImage: "keyboard")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !model.status.isEmpty {
+                    Text(model.status)
+                        .font(.caption)
+                        .foregroundStyle(model.status.contains("未能") || model.status.contains("中断") ? Color.red : Color.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                }
+
+                if let url = model.outputURL, !model.isRecording {
+                    HStack {
+                        Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button(L10n.text("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            .buttonStyle(.link)
+                    }
                 }
             }
-
-            Text(model.status)
-                .font(.callout)
-                .foregroundStyle(model.status.contains("未能") || model.status.contains("中断") ? Color.red : Color.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-
-            if let url = model.outputURL, !model.isRecording {
-                HStack {
-                    Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Button(L10n.text("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                }
-            }
-            Spacer(minLength: 0)
+            .padding(.top, 2)
         }
-        .padding(24)
-        .frame(minWidth: 700, minHeight: 390)
+        .padding(4)
+        .frame(minWidth: 500, minHeight: 230, alignment: .topLeading)
         .onReceive(NotificationCenter.default.publisher(for: .screenRecorderShortcut)) { _ in
             if model.isRecording { model.stopRecording() }
             else { model.startRecording(in: outputDirectoryURL, quality: quality) }
         }
+    }
+
+    private func settingRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .foregroundStyle(.primary)
+                .frame(width: 72, alignment: .leading)
+            content()
+        }
+        .frame(minHeight: 32)
     }
 
     private var outputDirectoryURL: URL {

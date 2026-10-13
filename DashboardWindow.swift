@@ -85,12 +85,12 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     init(module: Module? = nil, window suppliedWindow: NSWindow? = nil, registerServices: Bool = true, clipboardHistory suppliedClipboardHistory: ClipboardHistory? = nil) {
         injectedClipboardHistory = suppliedClipboardHistory
-        let size: NSSize = module == .settings ? NSSize(width: 520, height: 430) : module == .networkDiagnostics ? NSSize(width: 1180, height: 800) : NSSize(width: 980, height: 680)
+        let size: NSSize = module == .settings ? NSSize(width: 520, height: 430) : module == .networkDiagnostics ? NSSize(width: 1180, height: 800) : module == .screenRecorder ? NSSize(width: 620, height: 300) : NSSize(width: 980, height: 680)
         let window = suppliedWindow ?? NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = L10n.text(module == .logs ? L10n.text("AI Lock 应用日志") : (module?.rawValue ?? "AI Lock"))
-        window.minSize = module == .settings ? NSSize(width: 500, height: 400) : module == .networkDiagnostics ? NSSize(width: 960, height: 620) : NSSize(width: 760, height: 500)
+        window.minSize = module == .settings ? NSSize(width: 500, height: 400) : module == .networkDiagnostics ? NSSize(width: 960, height: 620) : module == .screenRecorder ? NSSize(width: 560, height: 270) : NSSize(width: 760, height: 500)
         window.backgroundColor = module == .networkDiagnostics ? DiagnosticConsole.backgroundColor : canvas
         window.appearance = Self.preferredAppearance
         super.init(window: window)
@@ -1860,7 +1860,7 @@ struct DashboardOverviewView: View {
     private var visibleModuleIDs: Set<String> {
         visibleModulesRaw.isEmpty
             ? Set(modules.map { $0.2.rawValue })
-            : Set(visibleModulesRaw.split(separator: ",").map(String.init)).union([DashboardWindow.Module.preferences.rawValue, DashboardWindow.Module.dockLock.rawValue, DashboardWindow.Module.menuBarOrganizer.rawValue])
+            : Set(visibleModulesRaw.split(separator: ",").map(String.init)).union([DashboardWindow.Module.preferences.rawValue, DashboardWindow.Module.dockLock.rawValue])
     }
 
     private var orderedModuleIDs: [String] {
@@ -2016,7 +2016,7 @@ private struct HotkeySettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text(english ? "Quick Actions" : "快捷操作"))
+                    Text(L10n.text(english ? "Quick Actions" : "快捷检索"))
                         .font(.system(size: 14, weight: .medium))
                     Text(L10n.text(english ? "Click the shortcut to change it." : "点击快捷键即可修改。"))
                         .font(.caption)
@@ -2425,7 +2425,7 @@ private struct PreferencesWindowView: View {
     }
 
     private func moduleSymbol(_ module: DashboardWindow.Module) -> String {
-        ["DockLock 设置": "dock.rectangle", "快捷操作": "command", "文件活动": "doc.text.magnifyingglass", "应用卸载": "app.dashed", "启动项检查": "rectangle.stack.badge.play", "进程管理": "cpu", "网络活动": "network", "网络诊断": "speedometer", "录屏工具": "record.circle", "显示器控制": "sun.max", "系统日志": "list.bullet.rectangle", "剪贴板历史": "clipboard", "系统健康检查": "stethoscope", "设置": "gearshape"][module.rawValue] ?? "square"
+        ["DockLock 设置": "dock.rectangle", "快捷操作": "command", "菜单栏收纳": "menubar.rectangle", "文件活动": "doc.text.magnifyingglass", "应用卸载": "app.dashed", "启动项检查": "rectangle.stack.badge.play", "进程管理": "cpu", "网络活动": "network", "网络诊断": "speedometer", "录屏工具": "record.circle", "显示器控制": "sun.max", "系统日志": "list.bullet.rectangle", "剪贴板历史": "clipboard", "系统健康检查": "stethoscope", "设置": "gearshape"][module.rawValue] ?? "square"
     }
 
     private func moduleEnglishTitle(_ module: DashboardWindow.Module) -> String {
@@ -2469,7 +2469,7 @@ extension Notification.Name {
 }
 
 private extension DashboardWindow.Module {
-    static var allCasesForPreferences: [DashboardWindow.Module] { [.files, .uninstaller, .launchItems, .processes, .network, .networkDiagnostics, .screenRecorder, .logs, .clipboard, .cacheCleaner] }
+    static var allCasesForPreferences: [DashboardWindow.Module] { [.menuBarOrganizer, .files, .uninstaller, .launchItems, .processes, .network, .networkDiagnostics, .displayBrightness, .screenRecorder, .logs, .clipboard, .cacheCleaner] }
 }
 
 struct ScreenTopologyView: View {
@@ -2542,7 +2542,7 @@ extension Notification.Name {
 
 final class DisplayPrivacyCoverView: NSView {
     var restore: (() -> Void)?
-    private let hintLabel = NSTextField(labelWithString: "按 ESC取消黑屏测试")
+    private let hintLabel = NSTextField(labelWithString: L10n.text("按 ESC取消黑屏测试"))
     private var hintTimer: Timer?
     private var remainingHintToggles = 4
 
@@ -3516,7 +3516,15 @@ private struct MacHealthView: View {
                     Button(action: scan) { Label(L10n.text(model.scanning ? L10n.text("检查中…") : L10n.text("重新检查")), systemImage: "arrow.clockwise") }
                         .buttonStyle(.borderedProminent).controlSize(.large).disabled(model.scanning)
                 }
-                if model.scanning { ProgressView().progressViewStyle(.linear) }
+                if model.scanning {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ProgressView().progressViewStyle(.linear)
+                        Text(L10n.text(model.phase))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(L10n.text(model.phase))
+                    }
+                }
                 HStack(alignment: .top, spacing: 14) {
                     summaryCard(model.hardware?.modelName ?? L10n.text("读取中…"), symbol: "laptopcomputer", color: .blue) {
                         Text(L10n.format("%{0} · %{1} 核 · %{2} 内存", arguments: [
@@ -3549,7 +3557,7 @@ private struct MacHealthView: View {
                             }
                         }
                     }
-                    summaryCard("热压力 · " + L10n.text((model.snapshot?.thermalLevel ?? 0) == 0 ? "正常" : "异常"), symbol: "thermometer.medium", color: (model.snapshot?.thermalLevel ?? 0) == 0 ? .teal : .orange) {
+                    summaryCard(L10n.statusList("热压力 · " + ((model.snapshot?.thermalLevel ?? 0) == 0 ? "正常" : "异常")), symbol: "thermometer.medium", color: (model.snapshot?.thermalLevel ?? 0) == 0 ? .teal : .orange) {
                         VStack(alignment: .center, spacing: 7) {
                             ForEach(Array(thermalReadings.enumerated()), id: \.offset) { _, value in
                                 Text(L10n.statusList(value)).font(.system(size: 14, weight: .regular)).monospacedDigit()
@@ -4378,8 +4386,8 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         panel.delegate = self
         let root = surface
         panel.contentView = root
-        search.placeholderString = L10n.text("搜索")
-        search.font = .systemFont(ofSize: 25, weight: .regular)
+        search.placeholderString = L10n.text("搜应用/文件 · >命令在终端运行 · 网址在浏览器打开")
+        search.font = .systemFont(ofSize: 16, weight: .regular)
         search.isBordered = false
         search.isBezeled = false
         search.drawsBackground = false
@@ -4424,7 +4432,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { NotificationCenter.default.removeObserver(self) }
-    @objc private func refreshLanguage() { window?.title = L10n.text("快捷操作"); search.placeholderString = L10n.text("搜索"); searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L10n.text("搜索")); reload() }
+    @objc private func refreshLanguage() { window?.title = L10n.text("快捷操作"); search.placeholderString = L10n.text("搜应用/文件 · >命令在终端运行 · 网址在浏览器打开"); searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L10n.text("搜索")); reload() }
     func prepare() { search.stringValue = ""; engine.warmUp(); reload(); window?.center() }
     func windowDidBecomeKey(_ notification: Notification) { surface.focused = true }
     func windowDidResignKey(_ notification: Notification) { surface.focused = false; engine.cancel(); window?.orderOut(nil) }

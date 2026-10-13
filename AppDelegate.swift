@@ -59,8 +59,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
                 if self?.attemptStart() == true { timer.invalidate() }
             }
         }
+        DispatchQueue.main.async {
+            QuickSearch.shared.warmUp()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.showOverview()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.promptForFullDiskAccessIfNeeded()
+        }
+    }
+
+    private func promptForFullDiskAccessIfNeeded() {
+        guard SearchDiskAccess.status() == .denied else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L10n.text("开启完全磁盘访问以搜索文件与文件夹")
+        alert.informativeText = L10n.text("请在系统设置中为 AI Lock 开启完全磁盘访问，然后完全退出并重新打开应用。")
+        alert.addButton(withTitle: L10n.text("打开完全磁盘访问设置"))
+        alert.addButton(withTitle: L10n.text("稍后"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            SearchDiskAccess.openSettings()
         }
     }
 
@@ -329,11 +348,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             overviewPopover.behavior = .transient
             overviewPopover.animates = true
             let overview = DashboardOverviewView()
-            let hostingController = NSHostingController(rootView: overview)
+            let hostingController = NSHostingController(rootView: AnyView(overview))
             hostingController.view.appearance = DashboardWindow.preferredAppearance
             overviewPopover.contentViewController = hostingController
             hostingController.view.layoutSubtreeIfNeeded()
-            overviewPopover.contentSize = NSSize(width: 390, height: ceil(hostingController.view.fittingSize.height))
+            let fittingHeight = ceil(hostingController.view.fittingSize.height)
+            let screen = button.window?.screen ?? NSScreen.main
+            let maximumHeight = max(320, (screen?.visibleFrame.height ?? fittingHeight) - 24)
+            let contentHeight = min(fittingHeight, maximumHeight)
+            if fittingHeight > maximumHeight {
+                hostingController.rootView = AnyView(ScrollView(.vertical) {
+                    overview
+                }
+                .frame(width: 390, height: contentHeight))
+            }
+            overviewPopover.contentSize = NSSize(width: 390, height: contentHeight)
             overviewPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             startOverviewClickMonitoring()
             DispatchQueue.main.async { [weak self] in
