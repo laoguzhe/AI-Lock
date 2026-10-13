@@ -4,6 +4,9 @@ build/
 .build/
 .swiftpm/
 
+# Internal documentation stays local
+/docs/
+
 # Personal development planning notes
 /开发计划.md
 

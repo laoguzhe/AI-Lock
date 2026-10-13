@@ -6,6 +6,8 @@
 
 AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，集合系统监控、网络诊断、文件与剪贴板管理、快捷启动和多显示器辅助功能。支持 macOS 14 或更高版本，发行包面向 Apple silicon 和 Intel Mac。
 
+本地文件、应用设置和剪贴板记录均保存在本机，请放心使用。网络诊断和在线查询等功能会按需连接相应的外部服务。
+
 ## 下载与安装
 
 - [从 GitHub Releases 下载最新版 DMG](https://github.com/laoguzhe/AI-Lock/releases/latest)
@@ -17,7 +19,7 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 
 ## 功能详解
 
-![AI Lock 功能模块总览](docs/images/features-overview.png)
+![AI Lock 功能模块总览](screenshots/features-overview.png)
 
 上图为主要模块入口；实时资源数值已从截图中裁去。
 
@@ -37,7 +39,7 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 - **网络诊断**：运行测速、多节点和网络接口对比、DNS 查询、路由追踪、Ping 丢包与抖动、TCP 端口及 IPv6 连通性检查；检查本机 IP、网关、路由和代理信息，并复制或导出报告。
 - **网络过滤准备**：项目包含 Network Extension 内容过滤相关代码和原型配置。系统级过滤需要签名扩展、相应 Apple capability、用户批准和实机验收；默认发行包不承诺提供已启用的全机过滤能力。
 
-网络诊断会按所选项目连接相应测试端点，测速会传输有限测试数据。节点位置可能由 CDN 或 VPN 改变；探测无响应也不一定代表网络故障。完整测量方法与限制见[网络诊断说明](docs/network-latency-map.md)。
+网络诊断会按所选项目连接相应测试端点，测速会传输有限测试数据。节点位置可能由 CDN 或 VPN 改变；探测无响应也不一定代表网络故障。
 
 ### 文件与 AI 工具活动
 
@@ -46,7 +48,7 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 - **文件活动审计**：提供文件访问事件的筛选、详情和 JSON 导出。Endpoint Security 原型显示的是系统交付的事件元数据；OPEN 不证明读取了文件正文，CLOSE.modified 也不表示捕获到每次写调用。全机审计需要 Apple 批准 Endpoint Security entitlement、签名并激活系统扩展以及用户授权；**默认发行包不包含该扩展，也不保证全机审计**。
 - **Agent Hooks**：可为 Claude Code、Codex 和 Cursor 配置 hooks，记录实际经过 hooks 的会话、工具、路径或命令，以及完成、失败或阻止状态；可按规则阻止部分敏感路径写入或危险命令。事件元数据和策略保存在本机，不保存文件正文或工具输出。它只覆盖触发了相应 hook 的调用，不是全机行为监控。
 
-文件活动详情、授权状态和边界见[文件活动说明](docs/文件活动.md)与[扩展说明](extensions/README.md)。
+文件活动功能需要相应授权；扩展状态和限制见[扩展说明](extensions/README.md)。
 
 ### 剪贴板
 
@@ -58,11 +60,11 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 
 - **屏幕录制**：选择显示器、清晰度和保存目录，录制屏幕画面与系统声音，输出 MOV 文件；录制中可查看时长并停止。需在 macOS“隐私与安全性”中允许屏幕与系统录音。录屏快捷键可在设置中配置。
 
-![录屏工具设置界面。示例路径已替换；实际录制需要授予屏幕与系统录音权限。](docs/images/screen-recorder.png)
+![录屏工具设置界面。示例路径已替换；实际录制需要授予屏幕与系统录音权限。](screenshots/screen-recorder.png)
 
 - **显示器亮度**：可选模块，向部分 Apple Silicon Mac 识别到的外接 DDC 通道发送统一亮度值；不读取当前亮度。Intel Mac 和部分 HDMI、扩展坞组合不支持。
 - **DockLock**：在多显示器环境中限制指针从非目标屏幕边缘进入目标屏幕，并在空闲时将 Dock 指针带回目标屏幕；真实鼠标移动会取消正在进行的回弹。需要辅助功能权限。
-- **菜单栏收纳**：把不常用菜单栏图标折叠到箭头左侧，并展开查看；可设置展开后的自动收起行为。详见[菜单栏收纳说明](docs/menu-bar-organizer.md)。
+- **菜单栏收纳**：把不常用菜单栏图标折叠到箭头左侧，并展开查看；可设置展开后的自动收起行为。
 - **屏幕遮罩**：在选定屏幕显示黑色视觉遮罩，至少保留一块屏幕可见；`⌘⌃⇧Esc` 可解除全部遮罩。遮罩不会关闭屏幕，也不会阻止系统或其他应用读取屏幕内容。
 
 ## 权限与隐私
@@ -124,4 +126,4 @@ defaults write com.laogu.ailock targetDisplay -string builtin # builtin | main |
 
 修改版本可补充：`Modified by <name>; changes: <summary>.`
 
-代码主要使用 Swift、AppKit、SwiftUI 和 macOS 系统框架。设计背景与实现边界见 [`docs/`](docs/) 和 [`extensions/README.md`](extensions/README.md)。
+代码主要使用 Swift、AppKit、SwiftUI 和 macOS 系统框架。扩展实现边界见 [`extensions/README.md`](extensions/README.md)。

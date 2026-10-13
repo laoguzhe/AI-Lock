@@ -6,6 +6,8 @@
 
 AI Lock is a free, native Swift/AppKit utility for macOS. It brings together system monitoring, network diagnostics, file and clipboard tools, quick launch, and multi-display utilities. It requires macOS 14 or later. Release builds support both Apple silicon and Intel Macs.
 
+Local files, app settings, and clipboard history stay on your Mac. Network diagnostics and online lookups connect to the relevant external services when you use them.
+
 ## Download and install
 
 - [Download the latest DMG from GitHub Releases](https://github.com/laoguzhe/AI-Lock/releases/latest)
@@ -17,7 +19,7 @@ AI Lock is free and has no subscription or in-app purchases. Open the downloaded
 
 ## Features
 
-![AI Lock feature overview](docs/images/features-overview.png)
+![AI Lock feature overview](screenshots/features-overview.png)
 
 The image shows the main feature modules. Live system metrics were cropped out.
 
@@ -37,7 +39,7 @@ The image shows the main feature modules. Live system metrics were cropped out.
 - **Network diagnostics:** Run speed tests, compare endpoints and interfaces, query DNS, trace routes, measure ping loss and jitter, test TCP ports and IPv6 connectivity, and inspect local IP, gateway, routes, and proxy settings. Copy or export a report.
 - **Network filtering preparation:** The project includes Network Extension content-filtering code and prototype configuration. System-wide filtering requires a signed extension, the relevant Apple capability, user approval, and testing on a real Mac. The default release does not claim to provide an enabled system-wide filter.
 
-Network diagnostics connect to the test endpoints selected by the user. Speed tests transfer a limited amount of test data. CDN or VPN routing can affect the apparent location of a node, and an unresponsive probe does not always indicate a network failure. See the [network diagnostics notes](docs/network-latency-map.md) for methods and limitations.
+Network diagnostics connect to the test endpoints selected by the user. Speed tests transfer a limited amount of test data. CDN or VPN routing can affect the apparent location of a node, and an unresponsive probe does not always indicate a network failure.
 
 ### Files and AI tool activity
 
@@ -46,7 +48,7 @@ Network diagnostics connect to the test endpoints selected by the user. Speed te
 - **File activity audit:** Filter and inspect file-access events and export JSON. Endpoint Security reports metadata supplied by macOS: OPEN does not prove file contents were read, and CLOSE.modified does not capture every write call. Full-machine auditing requires Apple's approval for the Endpoint Security entitlement, a signed and activated system extension, and user authorization. **The default release does not include the extension and does not guarantee full-machine auditing.**
 - **Agent Hooks:** Configure hooks for Claude Code, Codex, and Cursor to record sessions, tools, paths or commands, and completion, failure, or block status for calls that pass through those hooks. Rules can block some writes to sensitive paths or dangerous command patterns. Event metadata and rules stay on the Mac; file contents and tool output are not stored. Hooks cover only calls that trigger the configured hooks and are not a full-machine monitor.
 
-See the [file activity notes](docs/文件活动.md) and [extension notes](extensions/README.md) for authorization states and limitations.
+File activity requires the relevant permissions. See the [extension notes](extensions/README.md) for extension status and limitations.
 
 ### Clipboard
 
@@ -58,11 +60,11 @@ See the [file activity notes](docs/文件活动.md) and [extension notes](extens
 
 - **Screen recording:** Choose a display, resolution, and save folder to record screen video and system audio to a MOV file. View the elapsed time and stop a recording. macOS Screen & System Audio Recording permission is required. The shortcut is configurable in Settings.
 
-  ![Screen recorder settings. The example path is generic; recording requires Screen & System Audio Recording permission.](docs/images/screen-recorder.png)
+  ![Screen recorder settings. The example path is generic; recording requires Screen & System Audio Recording permission.](screenshots/screen-recorder.png)
 
 - **Display brightness:** An optional module that sends a unified brightness value to supported external DDC channels detected on some Apple silicon Macs. It does not read the current brightness. Intel Macs and some HDMI and dock setups are unsupported.
 - **DockLock:** On multi-display setups, restrict the pointer from crossing an edge away from the target display and return the pointer to the Dock on that display when idle. Real mouse movement cancels a return in progress. Accessibility permission is required.
-- **Menu bar organizer:** Fold less-used menu bar icons to the left of an arrow and expand them on demand. Configure automatic collapse after expansion. See the [menu bar organizer notes](docs/menu-bar-organizer.md).
+- **Menu bar organizer:** Fold less-used menu bar icons to the left of an arrow and expand them on demand. Configure automatic collapse after expansion.
 - **Screen mask:** Show a black visual mask on selected displays while keeping at least one display visible. Press `⌘⌃⇧Esc` to remove all masks. A mask does not turn off a display or prevent macOS or other apps from reading its contents.
 
 ## Permissions and privacy
@@ -124,4 +126,4 @@ Attribution example:
 
 A modified version can add: `Modified by <name>; changes: <summary>.`
 
-The code is primarily written in Swift and uses AppKit, SwiftUI, and macOS system frameworks. See [`docs/`](docs/) and [`extensions/README.md`](extensions/README.md) for background and implementation limits.
+The code is primarily written in Swift and uses AppKit, SwiftUI, and macOS system frameworks. See [`extensions/README.md`](extensions/README.md) for extension implementation limits.
