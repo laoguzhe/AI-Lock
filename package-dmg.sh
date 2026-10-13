@@ -4,8 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-1.2}"
-BUILD_NUM="${BUILD_NUM:-3}"
+VERSION="${VERSION:-$(cat VERSION)}"
+BUILD_NUM="${BUILD_NUM:-$(cat BUILD_NUM)}"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ && "$BUILD_NUM" =~ ^[0-9]+$ ]] || {
 	echo "Invalid VERSION or BUILD_NUM" >&2
 	exit 1

@@ -14,8 +14,8 @@ RELEASE=0
 [[ "${1:-}" == "--release" ]] && RELEASE=1
 
 # 版本号走环境变量，发版时 VERSION=1.2 BUILD_NUM=3 ./release.sh 即可，不用改脚本
-VERSION="${VERSION:-1.2}"
-BUILD_NUM="${BUILD_NUM:-3}"
+VERSION="${VERSION:-$(cat VERSION)}"
+BUILD_NUM="${BUILD_NUM:-$(cat BUILD_NUM)}"
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ && "$BUILD_NUM" =~ ^[0-9]+$ ]] || { echo "Invalid VERSION or BUILD_NUM" >&2; exit 1; }
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 

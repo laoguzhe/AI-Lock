@@ -5,7 +5,7 @@ AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，集合系统监控�
 ## 下载与安装
 
 - [从 GitHub Releases 下载最新版 DMG](https://github.com/laoguzhe/AI-Lock/releases/latest)
-- [直接下载 AI Lock 1.2 DMG](https://github.com/laoguzhe/AI-Lock/releases/latest/download/AILock-1.2.dmg)
+- [直接下载 AI Lock DMG](https://github.com/laoguzhe/AI-Lock/releases/latest/download/AILock.dmg)
 
 AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，将 `AI Lock.app` 拖到“应用程序”文件夹，再从 Launchpad 或 Finder 启动。首次使用屏幕录制、文件搜索或 DockLock 时，macOS 可能会提示授予相应权限。
 
@@ -89,15 +89,23 @@ defaults write com.laogu.ailock targetDisplay -string builtin # builtin | main |
 ./package-dmg.sh
 ```
 
-`package-dmg.sh` 会在 `build/package/` 中构建应用并生成 `AILock-1.2-local.dmg`。此本地包不经过 Apple 公证，适合开发和内部试用，不要作为公开下载版。
+`package-dmg.sh` 会在 `build/package/` 中构建应用并生成 `AILock-<VERSION>-local.dmg`。此本地包不经过 Apple 公证，适合开发和内部试用，不要作为公开下载版。
 
 准备可直接供外部用户下载的签名与公证版：
 
 ```bash
-VERSION=1.2 BUILD_NUM=3 ./package-dmg.sh --release
+./package-dmg.sh --release
 ```
 
-该命令调用 `release.sh`，需要 Developer ID Application 证书和 `notarytool` 公证配置；会生成 `build/AILock-1.2.dmg`。应用包内的 `Contents/Resources/LICENSE.txt` 会附上本项目许可证和来源署名。上传 GitHub Release 时，把版本对应的公证 DMG 添加为附件，并与 README 下载链接中的资产名称保持一致。
+该命令调用 `release.sh`，需要 Developer ID Application 证书和 `notarytool` 公证配置；会按 [`VERSION`](VERSION) 和 [`BUILD_NUM`](BUILD_NUM) 生成 DMG。应用包内的 `Contents/Resources/LICENSE.txt` 会附上本项目许可证和来源署名。
+
+完整发布（生成公证 DMG、提交并推送版本变更、创建 GitHub Release 并上传 DMG 与 SHA-256）：
+
+```bash
+./publish-release.sh 1.3
+```
+
+脚本自动递增 build number，可另传 build number 和发布说明文件。仓库保持 Private，Release 及附件仅对有仓库权限的用户开放；脚本不会更改仓库可见性。
 
 其他开发检查命令见 [`tests/`](tests/)。真实 Endpoint Security 授权和系统扩展运行仍需已批准的 entitlement 与签名设备验收；本地原型构建不能代替该验收。
 

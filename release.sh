@@ -12,8 +12,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-1.2}"
-BUILD_NUM="${BUILD_NUM:-3}"
+VERSION="${VERSION:-$(cat VERSION)}"
+BUILD_NUM="${BUILD_NUM:-$(cat BUILD_NUM)}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 PROFILE="${NOTARY_PROFILE:-docklock-notary}"
 BUILD_DIR="${BUILD_DIR:-build}"
