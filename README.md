@@ -99,13 +99,7 @@ defaults write com.laogu.ailock targetDisplay -string builtin # builtin | main |
 
 该命令调用 `release.sh`，需要 Developer ID Application 证书和 `notarytool` 公证配置；会按 [`VERSION`](VERSION) 和 [`BUILD_NUM`](BUILD_NUM) 生成 DMG。应用包内的 `Contents/Resources/LICENSE.txt` 会附上本项目许可证和来源署名。
 
-完整发布（生成公证 DMG、提交并推送版本变更、创建 GitHub Release 并上传 DMG 与 SHA-256）：
-
-```bash
-./publish-release.sh 1.3
-```
-
-脚本自动递增 build number，可另传 build number 和发布说明文件。仓库保持 Private，Release 及附件仅对有仓库权限的用户开放；脚本不会更改仓库可见性。
+发布 DMG 需要 Developer ID 签名、公证凭据和已配置的 GitHub CLI。GitHub Release 附件使用固定名称 `AILock.dmg`，仓库保持 Private 时仅有权限的用户可以下载。
 
 其他开发检查命令见 [`tests/`](tests/)。真实 Endpoint Security 授权和系统扩展运行仍需已批准的 entitlement 与签名设备验收；本地原型构建不能代替该验收。
 
