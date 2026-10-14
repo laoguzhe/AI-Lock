@@ -57,7 +57,8 @@ struct NetTopParser {
     }
 }
 
-final class ProcessNetworkMonitor {
+/// Access to mutable sampling state is serialized through `queue`.
+final class ProcessNetworkMonitor: @unchecked Sendable {
     typealias Rate = NetTopParser.Rate
     private let queue = DispatchQueue(label: "com.laogu.ailock.process-network")
     private var task: Process?

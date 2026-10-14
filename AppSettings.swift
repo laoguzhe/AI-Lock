@@ -9,7 +9,8 @@ enum SettingValue {
         case "alert.thermalLevel": range = 2...3
         case "alert.swapGB": range = 0.1...1_000_000
         case "alert.diskGB": range = 0.1...1_000_000
-        case "alert.networkMB": range = 0.1...1_000_000
+        case "alert.diskFreePercent": range = 1...100
+        case "alert.networkMB": range = 0.1...1_000
         case "edgeMargin": range = 1...100
         default: return nil
         }
@@ -35,8 +36,9 @@ enum SettingValue {
 struct AlertThresholds: Codable, Equatable {
     var cpu = 90.0
     var memory = 80.0
-    var diskGB = 10.0
+    var diskFreePercent = 10.0
     var networkMB = 50.0
+    // Retained for decoding existing settings data; swap alerts are no longer used.
     var swapGB = 4.0
     var batteryPercent = 20.0
     var thermalLevel = 2.0
@@ -106,10 +108,20 @@ final class AppSettings {
         set { guard supportsWrites, newValue.isFinite, (0.8...1.4).contains(newValue) else { return }; defaults.set(newValue, forKey: "overview.fontScale.v1") }
     }
     var alerts: AlertThresholds {
-        get { AlertThresholds(cpu: SettingValue.read("alert.cpu", fallback: 90, defaults: defaults), memory: SettingValue.read("alert.memory", fallback: 80, defaults: defaults), diskGB: SettingValue.read("alert.diskGB", fallback: 10, defaults: defaults), networkMB: SettingValue.read("alert.networkMB", fallback: 50, defaults: defaults), swapGB: SettingValue.read("alert.swapGB", fallback: 4, defaults: defaults), batteryPercent: SettingValue.read("alert.batteryPercent", fallback: 20, defaults: defaults), thermalLevel: SettingValue.read("alert.thermalLevel", fallback: 2, defaults: defaults)) }
+        get {
+            let legacyDisk = SettingValue.read("alert.diskGB", fallback: 10, defaults: defaults)
+            let legacyDiskPercent = legacyDisk <= 100 ? max(1, legacyDisk) : 10
+            return AlertThresholds(cpu: SettingValue.read("alert.cpu", fallback: 90, defaults: defaults),
+                                   memory: SettingValue.read("alert.memory", fallback: 80, defaults: defaults),
+                                   diskFreePercent: SettingValue.read("alert.diskFreePercent", fallback: legacyDiskPercent, defaults: defaults),
+                                   networkMB: SettingValue.read("alert.networkMB", fallback: 50, defaults: defaults),
+                                   swapGB: SettingValue.read("alert.swapGB", fallback: 4, defaults: defaults),
+                                   batteryPercent: SettingValue.read("alert.batteryPercent", fallback: 20, defaults: defaults),
+                                   thermalLevel: SettingValue.read("alert.thermalLevel", fallback: 2, defaults: defaults))
+        }
     }
     @discardableResult func saveAlerts(_ value: AlertThresholds) -> Bool {
-        supportsWrites && SettingValue.saveThresholds([("alert.cpu", value.cpu), ("alert.memory", value.memory), ("alert.diskGB", value.diskGB), ("alert.networkMB", value.networkMB), ("alert.swapGB", value.swapGB), ("alert.batteryPercent", value.batteryPercent), ("alert.thermalLevel", value.thermalLevel)], defaults: defaults)
+        supportsWrites && SettingValue.saveThresholds([("alert.cpu", value.cpu), ("alert.memory", value.memory), ("alert.diskFreePercent", value.diskFreePercent), ("alert.networkMB", value.networkMB), ("alert.batteryPercent", value.batteryPercent), ("alert.thermalLevel", value.thermalLevel)], defaults: defaults)
     }
     var appearance: Appearance { Appearance(rawValue: defaults.string(forKey: "appearance.mode") ?? "system") ?? .system }
     var moduleHotkeys: [String: Int] {

@@ -44,7 +44,8 @@ enum ProcessSort: String, CaseIterable {
     case name = "名称"
 }
 
-final class ProcessMonitor {
+/// Keep each instance confined to one serial sampling queue.
+final class ProcessMonitor: @unchecked Sendable {
     private var previousCPUTicks: [pid_t: UInt64] = [:]
     private var previousSampleTime = ProcessInfo.processInfo.systemUptime
     private var previousStartTimes: [pid_t: Date] = [:]

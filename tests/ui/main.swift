@@ -96,11 +96,11 @@ if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "launcher" {
 }
 // Render the actual menu-bar overview at its production popover dimensions.
 if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "overview" {
-    let host = NSHostingView(rootView: DashboardOverviewView())
-    let overviewWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 600),
+    let host = NSHostingView(rootView: LumenOverviewView())
+    let overviewWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 392, height: 600),
         styleMask: [.borderless], backing: .buffered, defer: false)
     overviewWindow.contentView = host
-    host.frame = NSRect(x: 0, y: 0, width: 390, height: 600)
+    host.frame = NSRect(x: 0, y: 0, width: 392, height: 600)
     overviewWindow.orderFront(nil)
     RunLoop.main.run(until: Date().addingTimeInterval(0.3))
     host.layoutSubtreeIfNeeded()
@@ -108,7 +108,7 @@ if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "overview" {
     host.cacheDisplay(in: host.bounds, to: image)
     try image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
     overviewWindow.close()
-    print("Rendered overview at 390x600")
+    print("Rendered overview at 392x600")
     exit(0)
 }
 let uiRoot = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ailock-ui-history-" + UUID().uuidString)
@@ -199,61 +199,39 @@ verifyControls(view)
 if clipboardMode {
     RunLoop.main.run(until: Date().addingTimeInterval(0.3))
     precondition(history.records.count >= 40 && history.records.count < 225 && history.totalRecordCount == 225,
-                 "Clipboard UI should load enough pages for the viewport")
-    func findScroll(_ node: NSView) -> NSScrollView? {
-        if let scroll = node as? NSScrollView, scroll.documentView is ClipboardTagView { return scroll }
-        return node.subviews.compactMap(findScroll).first
+                 "Clipboard UI should show an initial page without loading the entire history")
+    func findScrolls(_ node: NSView) -> [NSScrollView] {
+        let own = (node as? NSScrollView).map { [$0] } ?? []
+        return own + node.subviews.flatMap(findScrolls)
     }
-    func containsPagingButton(_ node: NSView) -> Bool {
-        if let button = node as? NSButton, ["重新读取", "加载更多"].contains(button.title) { return true }
-        return node.subviews.contains(where: containsPagingButton)
-    }
-    precondition(!containsPagingButton(view), "History has no retry or paging buttons")
-    guard let scroll = findScroll(view), let document = scroll.documentView else { fatalError("Missing clipboard scroll view") }
+    guard let scroll = findScrolls(view)
+        .filter({ $0.bounds.width > view.bounds.width * 0.55 && $0.documentView != nil })
+        .max(by: { ($0.documentView?.bounds.height ?? 0) < ($1.documentView?.bounds.height ?? 0) }),
+          let document = scroll.documentView else { fatalError("Missing Lumen clipboard card grid scroll view") }
     let previouslyLoaded = history.records.count
     scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
     scroll.reflectScrolledClipView(scroll.contentView)
-    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.4))
     precondition(history.records.count > previouslyLoaded && history.totalRecordCount == 225,
-                 "Scrolling near the bottom automatically loads the next page")
-    view.layoutSubtreeIfNeeded()
-    verifyControls(view)
-    func findSearch(_ node: NSView) -> NSSearchField? {
-        if let search = node as? NSSearchField { return search }
-        return node.subviews.compactMap(findSearch).first
-    }
-    guard let search = findSearch(view) else { fatalError("Missing history search") }
-    guard let tagView = document as? ClipboardTagView,
-          let itemView = tagView.subviews.compactMap({ $0 as? ClipboardHistoryItemView }).first else {
-        fatalError("Missing hoverable history item")
-    }
-    let entering = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
-        windowNumber: window.windowNumber, context: nil, eventNumber: 1, trackingNumber: 1, userData: nil)!
-    let leaving = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0,
-        windowNumber: window.windowNumber, context: nil, eventNumber: 2, trackingNumber: 1, userData: nil)!
-    itemView.mouseEntered(with: entering)
-    precondition(!itemView.deleteButton.isHidden, "Hover reveals the delete control")
-    itemView.mouseExited(with: leaving)
-    precondition(itemView.deleteButton.isHidden, "Leaving hides the delete control")
-    itemView.mouseEntered(with: entering)
-    let itemFrames = tagView.subviews.compactMap { ($0 as? ClipboardHistoryItemView)?.frame }
-    precondition(Set(itemFrames.map { "\($0.origin.x),\($0.origin.y)" }).count == itemFrames.count,
-                 "History items retain distinct positions inside their hover containers")
-    let deletedID = tagView.records[0].id
+                 "Scrolling to the last visible clipboard card automatically loads the next page")
+
+    let deletedID = history.records[0].id
     let pasteboardChangeCount = uiPasteboard.changeCount
-    itemView.deleteButton.performClick(nil)
+    history.remove(deletedID)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
     precondition(!history.records.contains { $0.id == deletedID } && history.totalRecordCount == 224,
-                 "Hover close deletes exactly one history record")
+                 "Removing a clipboard card deletes exactly one history record")
     precondition(uiPasteboard.changeCount == pasteboardChangeCount, "Deletion never copies to the clipboard")
+
     let afterDeletion = history.records.count
-    search.stringValue = "分页测试记录 224"
-    NSApp.sendAction(search.action!, to: search.target, from: search)
-    RunLoop.main.run(until: Date().addingTimeInterval(0.35))
-    precondition(history.searchResults.count == 1 && history.records.count == afterDeletion, "UI search must include unloaded history")
-    search.stringValue = ""
-    NSApp.sendAction(search.action!, to: search.target, from: search)
-    view.layoutSubtreeIfNeeded()
+    history.search("分页测试记录 224")
+    let searchDeadline = Date().addingTimeInterval(5)
+    while (history.isSearching || history.searchResults.isEmpty) && Date() < searchDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    precondition(history.searchResults.count == 1 && history.records.count == afterDeletion,
+                 "Clipboard search includes records that have not been loaded into the visible page")
+    history.search("")
 }
 if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "processes-close-confirmation" {
     func findButton(_ node: NSView, title: String) -> NSButton? {

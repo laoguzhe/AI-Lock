@@ -203,6 +203,19 @@
 				"E87C5A79E5C10528177F052D",
 				"F590049322CFDD7458642990",
 				"84ACA62B1B852F924F1FB4FA",
+				"E10000000000000000000001",
+				"E10000000000000000000002",
+				"E10000000000000000000003",
+				"E10000000000000000000004",
+				"E10000000000000000000005",
+				"E10000000000000000000006",
+				"E10000000000000000000007",
+				"E10000000000000000000008",
+				"E10000000000000000000009",
+				"E1000000000000000000000A",
+				"E1000000000000000000000B",
+				"E1000000000000000000000C",
+				"E1000000000000000000000D",
 			);
 			"sourceTree" = "<group>";
 		};
@@ -699,6 +712,19 @@
 				"6178F8F2C1A7C8ECF03DFBAB",
 				"7C4E3FB0B0B96A2A8BA42E09",
 				"2EF0A03CD2151CACD62E7D51",
+				"E20000000000000000000001",
+				"E20000000000000000000002",
+				"E20000000000000000000003",
+				"E20000000000000000000004",
+				"E20000000000000000000005",
+				"E20000000000000000000006",
+				"E20000000000000000000007",
+				"E20000000000000000000008",
+				"E20000000000000000000009",
+				"E2000000000000000000000A",
+				"E2000000000000000000000B",
+				"E2000000000000000000000C",
+				"E2000000000000000000000D",
 			);
 			"runOnlyForDeploymentPostprocessing" = "0";
 		};
@@ -1070,6 +1096,32 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"sourceTree" = "<group>";
 		};
+		"E10000000000000000000001" = { "isa" = "PBXFileReference"; "path" = "LumenDesignSystem.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000002" = { "isa" = "PBXFileReference"; "path" = "LumenShell.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000003" = { "isa" = "PBXFileReference"; "path" = "LumenOverviewView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000004" = { "isa" = "PBXFileReference"; "path" = "LumenProcessesView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000005" = { "isa" = "PBXFileReference"; "path" = "LumenNetworkView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000006" = { "isa" = "PBXFileReference"; "path" = "LumenFileActivityView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000007" = { "isa" = "PBXFileReference"; "path" = "LumenClipboardView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000008" = { "isa" = "PBXFileReference"; "path" = "LumenHealthView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E10000000000000000000009" = { "isa" = "PBXFileReference"; "path" = "LumenUninstallerView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E1000000000000000000000A" = { "isa" = "PBXFileReference"; "path" = "LumenLogsView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E1000000000000000000000B" = { "isa" = "PBXFileReference"; "path" = "LumenScreenViews.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E1000000000000000000000C" = { "isa" = "PBXFileReference"; "path" = "LumenPreferencesView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E1000000000000000000000D" = { "isa" = "PBXFileReference"; "path" = "LumenModuleHost.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
+		"E20000000000000000000001" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000001"; };
+		"E20000000000000000000002" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000002"; };
+		"E20000000000000000000003" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000003"; };
+		"E20000000000000000000004" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000004"; };
+		"E20000000000000000000005" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000005"; };
+		"E20000000000000000000006" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000006"; };
+		"E20000000000000000000007" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000007"; };
+		"E20000000000000000000008" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000008"; };
+		"E20000000000000000000009" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000009"; };
+		"E2000000000000000000000A" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000A"; };
+		"E2000000000000000000000B" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000B"; };
+		"E2000000000000000000000C" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000C"; };
+		"E2000000000000000000000D" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000D"; };
 	};
 	"rootObject" = "98F54143AB4E86B28C3AFEE0";
 }

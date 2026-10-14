@@ -5,7 +5,7 @@ import CryptoKit
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let defaults = UserDefaults.standard
-let keys = ["overview.language", "overview.followSystemLanguage"]
+let keys = ["overview.language", "overview.followSystemLanguage", "preferences.selectedSection"]
 let previous = keys.map { defaults.object(forKey: $0) }
 defer {
     for (key, value) in zip(keys, previous) {
@@ -20,7 +20,7 @@ let help = DelayedHelpButton(title: "刷新", target: nil, action: nil)
 let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
 defer { try? FileManager.default.removeItem(at: root) }
 let history = ClipboardHistory(fileURL: root.appendingPathComponent("history.bin"), defaults: UserDefaults(suiteName: UUID().uuidString)!, pasteboard: .withUniqueName(), keyProvider: { SymmetricKey(size: .bits256) })
-let modules: [DashboardWindow.Module] = [.files, .processes, .network, .clipboard, .logs, .settings, .search, .launcher, .cacheCleaner, .uninstaller, .launchItems]
+let modules: [DashboardWindow.Module] = [.menuBarOrganizer, .files, .processes, .network, .networkDiagnostics, .clipboard, .logs, .settings, .preferences, .dockLock, .search, .cacheCleaner, .uninstaller, .launchItems, .launcher, .screenRecorder, .displayBrightness]
 let controllers = modules.map { DashboardWindow(module: $0, registerServices: false, clipboardHistory: history) }
 let originalViews = controllers.map { $0.window!.contentView! }
 func accessibleStrings(_ element: Any, depth: Int = 0) -> [String] {
@@ -52,6 +52,10 @@ for english in [true, false, true] {
     defaults.set(english, forKey: keys[0])
     NotificationCenter.default.post(name: L10n.changed, object: nil)
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    precondition(L10n.text("程序坞锁定") == (english ? "Dock Lock" : "程序坞锁定"))
+    precondition(L10n.text("剪贴板记录") == (english ? "Clipboard Record" : "剪贴板记录"))
+    precondition(L10n.format("已遮罩 %{0} / %{1} 块", arguments: ["1", "2"]) == (english ? "1 of 2 displays covered" : "已遮罩 1 / 2 块"))
+    precondition(L10n.text("中文用户内容保持原样") == "中文用户内容保持原样", "Unknown user content must not be translated")
     let quickSearch = editableField(quickActions.window!.contentView!)!
     quickSearch.stringValue = "https://example.com"
     quickActions.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: quickSearch))
@@ -79,13 +83,14 @@ for english in [true, false, true] {
         precondition(window.title == (modules[index] == .logs ? L10n.text("AI Lock 应用日志") : L10n.text(modules[index].rawValue)), "Wrong window title for \(modules[index]): \(window.title)")
         let labels = accessibleStrings(window.contentView!)
         let chinese = labels.filter { $0.range(of: #"[\u4e00-\u9fff]"#, options: .regularExpression) != nil }
-        if english && modules[index] != .logs && modules[index] != .launchItems && modules[index] != .uninstaller && modules[index] != .cacheCleaner {
+        if english && modules[index] != .logs && modules[index] != .preferences && modules[index] != .launchItems && modules[index] != .uninstaller && modules[index] != .cacheCleaner {
             precondition(chinese.isEmpty, "Chinese UI in \(modules[index]): \(chinese)")
         }
         if english && [.files, .processes, .network].contains(modules[index]) { try save(window, name: modules[index].rawValue) }
         window.orderOut(nil)
     }
 }
+defaults.set("通用", forKey: keys[2])
 DashboardWindow.openPreferences()
 RunLoop.main.run(until: Date().addingTimeInterval(0.3))
 guard let preferences = app.windows.first(where: { $0.title == "Settings" }) else { fatalError("Settings window not localized") }
@@ -96,13 +101,9 @@ precondition(chinese.isEmpty, "Chinese settings UI: \(chinese)")
 try save(preferences, name: "settings")
 try save(preferences, name: "General")
 // SwiftUI's virtual accessibility tree is not exposed to this standalone test process.
-// Exercise its sidebar with window-local events and render every section for visual QA.
-for (section, offset) in [("Resource Alerts", 130.0), ("System Extensions", 95.0), ("DockLock", 164.0), ("Home Icons", 198.0), ("Keyboard Shortcuts", 232.0), ("Help-About", 266.0)] {
-    let location = NSPoint(x: 95, y: preferences.contentView!.bounds.height - offset)
-    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-        let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: preferences.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
-        preferences.sendEvent(event)
-    }
+// Set each stored section directly so this test does not depend on sidebar geometry.
+for (section, sectionValue) in [("Resource Alerts", "预警阈值"), ("System Extensions", "系统扩展"), ("DockLock", "程序坞锁定"), ("Home Icons", "首页图标"), ("Keyboard Shortcuts", "快捷键"), ("Help-About", "关于")] {
+    defaults.set(sectionValue, forKey: keys[2])
     RunLoop.main.run(until: Date().addingTimeInterval(0.15))
     preferences.contentView?.layoutSubtreeIfNeeded()
     try save(preferences, name: section)

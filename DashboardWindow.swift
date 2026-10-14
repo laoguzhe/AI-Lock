@@ -75,23 +75,16 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     private var moduleRoot: NSView?
-    private let logStore = SystemLogStore()
-    private var logEntries: [SystemLogEntry] = []
-    private var logPaused = false
-    private var logLoadGeneration = 0
-    private var cacheEntries: [CacheEntry] = []
-    private var cacheScanGeneration = 0
-    private var cacheScanInProgress = false
 
     init(module: Module? = nil, window suppliedWindow: NSWindow? = nil, registerServices: Bool = true, clipboardHistory suppliedClipboardHistory: ClipboardHistory? = nil) {
         injectedClipboardHistory = suppliedClipboardHistory
-        let size: NSSize = module == .settings ? NSSize(width: 520, height: 430) : module == .networkDiagnostics ? NSSize(width: 1180, height: 800) : module == .screenRecorder ? NSSize(width: 620, height: 300) : NSSize(width: 980, height: 680)
+        let size: NSSize = module.map { LumenWindowMetrics.size(for: $0) } ?? NSSize(width: 1120, height: 700)
         let window = suppliedWindow ?? NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = L10n.text(module == .logs ? L10n.text("AI Lock 应用日志") : (module?.rawValue ?? "AI Lock"))
-        window.minSize = module == .settings ? NSSize(width: 500, height: 400) : module == .networkDiagnostics ? NSSize(width: 960, height: 620) : module == .screenRecorder ? NSSize(width: 560, height: 270) : NSSize(width: 760, height: 500)
-        window.backgroundColor = module == .networkDiagnostics ? DiagnosticConsole.backgroundColor : canvas
+        window.minSize = module.map { LumenWindowMetrics.minimumSize(for: $0) } ?? NSSize(width: 880, height: 520)
+        window.backgroundColor = canvas
         window.appearance = Self.preferredAppearance
         super.init(window: window)
         NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage), name: L10n.changed, object: nil)
@@ -107,25 +100,34 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
 
     private var processesModule: ProcessesModuleController?
-    private var networkModule: NetworkModuleController?
     private var networkDiagnosticsModel: NetworkDiagnosticsModel?
-    private func showScreenRecorder() {
-        addModule(NSHostingView(rootView: ScreenRecorderView()))
+    /// 网络诊断的控制台由 SwiftUI 持有模型，这里留存引用以便挂起窗口时取消任务。
+    static func registerDiagnosticsModel(_ model: NetworkDiagnosticsModel) {
+        for controller in moduleWindows.values where controller.module == .networkDiagnostics {
+            controller.networkDiagnosticsModel = model
+        }
     }
-    private func showNetworkDiagnostics() {
-        let model = NetworkDiagnosticsModel()
-        networkDiagnosticsModel = model
-        addModule(NSHostingView(rootView: NetworkDiagnosticsView(model: model)))
-    }
-    private func showProcesses() { let controller = ProcessesModuleController(); processesModule = controller; addModule(controller.view) }
-    private func showNetwork() { let controller = NetworkModuleController(); networkModule = controller; addModule(controller.view, verticalInset: 8) }
+
+
+
+
+
+
+
+
     private func suspendPageSampling() {
         networkDiagnosticsModel?.cancel()
-        processesModule?.stop(); networkModule?.stop(); fileSearch.cancel(); filesModule?.stop()
+        processesModule?.stop()
+        fileSearch.cancel()
+        // 页面窗口只是隐藏而非销毁，SwiftUI 的 onDisappear 不会触发，
+        // 因此显式通知当前页面的模型停止后台采样。
+        if let module {
+            NotificationCenter.default.post(name: .lumenModuleDidSuspend, object: module.rawValue)
+        }
     }
     private func resumePageSampling() {
-        suspendPageSampling()
-        switch module { case .processes: processesModule?.resume(); case .network: networkModule?.resume(); case .clipboard: refreshClipboardTable(); default: break }
+        guard let module else { return }
+        NotificationCenter.default.post(name: .lumenModuleDidResume, object: module.rawValue)
     }
 
     func windowWillClose(_ notification: Notification) { suspendPageSampling() }
@@ -133,7 +135,6 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         guard let window else { return }
         NativeLocalization.refresh(window)
         window.title = L10n.text(module == .logs ? "AI Lock 应用日志" : module?.rawValue ?? "AI Lock")
-        if module == .logs { updateLogTable() }
         if module == .clipboard { clipboardModule?.refreshStatusText() }
     }
 
@@ -151,31 +152,25 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     private func buildModuleWindow(_ module: Module) {
         guard let window else { return }
-        let root = NSView(frame: NSRect(origin: .zero, size: window.contentView?.bounds.size ?? window.frame.size))
-        root.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = root
-        if let content = window.contentView {
-            NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: content.leadingAnchor), root.trailingAnchor.constraint(equalTo: content.trailingAnchor), root.topAnchor.constraint(equalTo: content.topAnchor), root.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
+        // 统一由 LumenModuleContent 渲染：左侧导航 + 右侧数据面。
+        // 侧栏切换模块时走 open(_:)，保持「一个模块一个窗口、切换时挂起采样」的既有行为。
+        let root = LumenModuleContent(module: module, clipboardHistory: clipboardHistory) { [weak self] next in
+            guard next != self?.module else { return }
+            _ = Self.open(next)
         }
-        moduleRoot = root
-        switch module {
-        case .dockLock, .menuBarOrganizer: break
-        case .cacheCleaner: showCacheCleaner()
-        case .uninstaller: showUninstaller()
-        case .launchItems: showLaunchItems()
-        case .files: showFileAudit()
-        case .processes: showProcesses()
-        case .network: showNetwork()
-        case .networkDiagnostics: showNetworkDiagnostics()
-        case .screenRecorder: showScreenRecorder()
-        case .displayBrightness: addModule(NSHostingView(rootView: DisplayBrightnessView()))
-        case .logs: showLogs()
-        case .clipboard: showClipboard()
-        case .settings: showSettings()
-        case .preferences: Self.openPreferences()
-        case .search: showQuickSearch()
-        case .launcher: showQuickSearch()
-        }
+        let hosting = NSHostingView(rootView: root)
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView(frame: NSRect(origin: .zero, size: window.contentView?.bounds.size ?? window.frame.size))
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(hosting)
+        window.contentView = container
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: container.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        moduleRoot = container
         activeModuleWindow = window
         window.center()
     }
@@ -200,8 +195,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
 
     static func openCommandPalette() {
-        let controller = open(.search)
-        DispatchQueue.main.async { controller.searchField?.becomeFirstResponder() }
+        _ = open(.search)
     }
 
     static func openLauncher() {
@@ -220,123 +214,11 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func addModule(_ page: NSView, verticalInset: CGFloat = 20) {
-        guard let moduleRoot else { return }
-        page.translatesAutoresizingMaskIntoConstraints = false
-        moduleRoot.addSubview(page)
-        NSLayoutConstraint.activate([
-            page.leadingAnchor.constraint(equalTo: moduleRoot.leadingAnchor, constant: 24),
-            page.trailingAnchor.constraint(equalTo: moduleRoot.trailingAnchor, constant: -24),
-            page.topAnchor.constraint(equalTo: moduleRoot.topAnchor, constant: verticalInset),
-            page.bottomAnchor.constraint(equalTo: moduleRoot.bottomAnchor, constant: -verticalInset)
-        ])
-    }
-
-    private func card() -> NSView {
-        let view = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        return view
-    }
-
-    private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = ink, mono: Bool = false) -> NSTextField {
-        let result = LocalizedLabel(labelWithString: L10n.text(text))
-        let compactSize = min(size, 12)
-        result.font = mono ? .monospacedSystemFont(ofSize: compactSize, weight: weight) : .systemFont(ofSize: compactSize, weight: weight)
-        result.textColor = color
-        result.translatesAutoresizingMaskIntoConstraints = false
-        return result
-    }
-
-    private func showLogs() {
-        let page = NSView()
-        page.translatesAutoresizingMaskIntoConstraints = false
-        let status = label("正在查询 AI Lock 当前进程日志…", size: 11, color: muted)
-        let search = NSSearchField()
-        search.placeholderString = L10n.text("搜索消息、子系统、类别或进程")
-        search.translatesAutoresizingMaskIntoConstraints = false
-        search.focusRingType = .none
-        search.target = self
-        search.action = #selector(logFilterChanged(_:))
-        let level = NSPopUpButton()
-        level.translatesAutoresizingMaskIntoConstraints = false
-        SystemLogLevel.allCases.forEach { level.addItem(withTitle: L10n.text($0.rawValue)) }
-        level.target = self
-        level.action = #selector(logFilterChanged(_:))
-
-        let table = NSTableView()
-        table.rowHeight = 34
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        table.backgroundColor = cardColor
-        table.allowsMultipleSelection = false
-        table.allowsEmptySelection = true
-        table.selectionHighlightStyle = .regular
-        table.target = self
-        table.doubleAction = #selector(showFullLogMessage(_:))
-        let columns: [(String, String, CGFloat)] = [("time", "最近发生", 172), ("level", "级别", 76), ("process", "进程", 130), ("message", "事件摘要（双击查看详情）", 560)]
-        columns.forEach { id, title, width in
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
-            column.title = L10n.text(title)
-            column.width = width
-            table.addTableColumn(column)
-        }
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = table
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        let data = LogTableDataSource(entries: [])
-        table.dataSource = data
-        table.delegate = data
-        logTableDataSource = data
-        logTable = table
-        logStatusLabel = status
-        logSearchField = search
-        logLevelPopup = level
-
-        let quick = NSSegmentedControl(labels: ["全部", "需要处理", "错误", "严重", "通知", "信息", "调试"].map { L10n.text($0) }, trackingMode: .selectOne, target: self, action: #selector(logFilterChanged(_:)))
-        quick.selectedSegment = 0
-        quick.translatesAutoresizingMaskIntoConstraints = false
-        logQuickFilter = quick
-        let refresh = toolbarButton("刷新", symbol: "arrow.clockwise", action: #selector(refreshLogs(_:)))
-        let export = toolbarButton("导出诊断", symbol: "square.and.arrow.up", action: #selector(exportLogDiagnostics(_:)))
-        let actions = NSStackView(views: [quick, refresh, export])
-        actions.spacing = 8
-        actions.translatesAutoresizingMaskIntoConstraints = false
-        [search, level, status, scroll, actions].forEach(page.addSubview)
-        NSLayoutConstraint.activate([
-            page.heightAnchor.constraint(greaterThanOrEqualToConstant: 360),
-            actions.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), actions.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10), actions.trailingAnchor.constraint(lessThanOrEqualTo: page.trailingAnchor, constant: -10),
-            search.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), search.topAnchor.constraint(equalTo: page.topAnchor, constant: 8),
-            search.trailingAnchor.constraint(equalTo: level.leadingAnchor, constant: -8),
-            level.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), level.centerYAnchor.constraint(equalTo: search.centerYAnchor), level.widthAnchor.constraint(equalToConstant: 150),
-            scroll.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), scroll.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 12), scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
-            status.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), status.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -32)
-        ])
-        addModule(page)
-        loadLogs()
-    }
-
-    private weak var logQuickFilter: NSSegmentedControl?
-    private var logTableDataSource: LogTableDataSource?
-    private weak var logTable: NSTableView?
-    private weak var logStatusLabel: NSTextField?
-    private weak var logSearchField: NSSearchField?
-    private weak var logLevelPopup: NSPopUpButton?
     private let injectedClipboardHistory: ClipboardHistory?
     private lazy var clipboardHistory = injectedClipboardHistory ?? ClipboardHistory.shared
-    private weak var searchField: NSSearchField?
-    private weak var searchResultsTable: NSTableView?
-    private var searchDataSource: SearchTableDataSource?
     private let fileSearch = QuickSearch.shared
     private var clipboardModule: ClipboardModuleController?
     private weak var activeModuleWindow: NSWindow?
-    private weak var alertCpuField: NSTextField?
-    private weak var alertMemoryField: NSTextField?
-    private weak var alertDiskField: NSTextField?
-    private weak var alertNetworkField: NSTextField?
-    private weak var alertSwapField: NSTextField?
-    private weak var alertBatteryField: NSTextField?
-    private weak var alertThermalField: NSTextField?
     private static var commandDetector = CommandDoubleTapDetector()
     private static var launcherWindow: QuickActionWindowController?
     private static var commandEventTap: CFMachPort?
@@ -349,6 +231,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     private static let screenRecorderShortcutModifiersKey = "screenRecorder.shortcut.modifiers"
     private static let screenRecorderShortcutEnabledKey = "screenRecorder.shortcut.enabled"
     private static let quickActionShortcutModifiersKey = "quickAction.shortcut.modifiers"
+    private static let commandInputMonitoringError = "双击 Command 未启用：需要输入监控权限，请在快捷键设置中开启。"
 
     static var quickActionShortcutTitle: String {
         guard UserDefaults.standard.bool(forKey: quickActionShortcutEnabledKey) else { return "⌘ 两次" }
@@ -526,12 +409,24 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             }
         }
         guard commandEventTap == nil else { return }
+        guard CGPreflightListenEventAccess() else {
+            if !hotkeyRegistrationErrors.contains(commandInputMonitoringError) {
+                hotkeyRegistrationErrors.append(commandInputMonitoringError)
+                log(commandInputMonitoringError)
+            }
+            if commandRetryTimer == nil {
+                commandRetryTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in installCommandEventTap() }
+            }
+            return
+        }
         let mask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue) | (CGEventMask(1) << CGEventType.keyDown.rawValue)
         commandEventTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap,
             options: .listenOnly, eventsOfInterest: mask, callback: ailockCommandTapCallback, userInfo: nil)
         guard let commandEventTap else {
-            let message = "需要输入监控权限，快捷操作的全局快捷键暂不可用。"
-            if !hotkeyRegistrationErrors.contains(message) { hotkeyRegistrationErrors.append(message) }
+            if !hotkeyRegistrationErrors.contains(commandInputMonitoringError) {
+                hotkeyRegistrationErrors.append(commandInputMonitoringError)
+                log(commandInputMonitoringError)
+            }
             if commandRetryTimer == nil {
                 commandRetryTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in installCommandEventTap() }
             }
@@ -597,495 +492,108 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func toolbarButton(_ title: String, symbol: String, action: Selector) -> NSButton {
-        let button = DelayedHelpButton(title: L10n.text(title), target: self, action: action)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: L10n.text(title))
-        button.imagePosition = .imageLeading
-        button.bezelStyle = .rounded
-        return button
-    }
-
-    private func loadLogs() {
-        guard !logPaused else { return }
-        logLoadGeneration += 1
-        let generation = logLoadGeneration
-        logEntries = []
-        updateLogTable()
-        logStatusLabel?.stringValue = L10n.text("正在加载 AI Lock 最近 10 分钟的应用日志…")
-        logStore.fetch(onBatch: { [weak self] batch, count, finished in
-            DispatchQueue.main.async {
-                guard let self, generation == self.logLoadGeneration else { return }
-                if !batch.isEmpty {
-                    self.logEntries.insert(contentsOf: batch, at: 0)
-                    if self.logEntries.count > 2_000 { self.logEntries.removeLast(self.logEntries.count - 2_000) }
-                    self.updateLogTable()
-                }
-                self.logStatusLabel?.stringValue = L10n.text(finished ? L10n.format("已完成查询，共扫描 %{0} 条；保留 %{1} 条", arguments: [String(describing: count), String(describing: self.logEntries.count)]) : L10n.format("已加载 %{0} 条日志…", arguments: [String(describing: count)]))
-            }
-        }) { [weak self] error in
-            DispatchQueue.main.async {
-                guard let self, generation == self.logLoadGeneration else { return }
-                if let error {
-                    self.logEntries = []
-                    self.logStatusLabel?.stringValue = L10n.format("读取失败：%{0}", arguments: [String(describing: error.localizedDescription)])
-                    self.updateLogTable()
-                } else {
-                    self.updateLogTable()
-                }
-            }
-        }
-    }
-
-    private func filteredLogEntries() -> [SystemLogEntry] {
-        let query = logSearchField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let selected = SystemLogLevel.allCases.indices.contains(logLevelPopup?.indexOfSelectedItem ?? -1) ? SystemLogLevel.allCases[logLevelPopup!.indexOfSelectedItem] : .all
-        return logEntries.filter { entry in
-            (selected == .all || entry.level == selected) &&
-            ((logQuickFilter?.selectedSegment ?? 0) == 0 ||
-             (logQuickFilter?.selectedSegment == 1 && entry.needsAttention) ||
-             (logQuickFilter?.selectedSegment == 2 && entry.level == .error) ||
-             (logQuickFilter?.selectedSegment == 3 && entry.level == .fault) ||
-             (logQuickFilter?.selectedSegment == 4 && entry.level == .notice) ||
-             (logQuickFilter?.selectedSegment == 5 && entry.level == .info) ||
-             (logQuickFilter?.selectedSegment == 6 && entry.level == .debug)) &&
-            (query.isEmpty || entry.summary.localizedCaseInsensitiveContains(query) || entry.message.localizedCaseInsensitiveContains(query) ||
-             entry.subsystem.localizedCaseInsensitiveContains(query) || entry.category.localizedCaseInsensitiveContains(query) ||
-             entry.process.localizedCaseInsensitiveContains(query))
-        }
-    }
-
-    private func updateLogTable() {
-        let entries = filteredLogEntries()
-        logTableDataSource?.entries = SystemLogGroup.merge(entries)
-        logTable?.reloadData()
-        let rows = logTableDataSource?.entries.count ?? 0
-        if rows > 0 { logTable?.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rows)) }
-        logStatusLabel?.stringValue = L10n.format("显示 %{0} 个事件 / %{1} 条记录 · 当前进程最近 10 分钟（最多 2000 条）", arguments: [String(describing: SystemLogGroup.merge(entries).count), String(describing: entries.count)])
-        var counts = [logEntries.count, logEntries.filter { $0.needsAttention }.count]
-        for level: SystemLogLevel in [.error, .fault, .notice, .info, .debug] {
-            counts.append(logEntries.filter { $0.level == level }.count)
-        }
-        for (index, title) in ["全部", "需要处理", "错误", "严重", "通知", "信息", "调试"].enumerated() { logQuickFilter?.setLabel("\(L10n.text(title)) \(counts[index])", forSegment: index) }
-    }
-
-    @objc private func logFilterChanged(_ sender: Any?) {
-        if sender is NSSegmentedControl { logLevelPopup?.selectItem(at: 0) }
-        if sender is NSPopUpButton { logQuickFilter?.selectedSegment = 0 }
-        updateLogTable()
-    }
-
-    @objc private func showFullLogMessage(_ sender: Any?) {
-        guard let table = logTable, let groups = logTableDataSource?.entries, groups.indices.contains(table.clickedRow) else { return }
-        let entry = groups[table.clickedRow]
-        let alert = NSAlert()
-        alert.messageText = L10n.text("运行记录详情")
-        let detail = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
-        detail.isEditable = false
-        detail.font = .systemFont(ofSize: 12)
-        detail.string = entry.detail
-        let scroll = NSScrollView(frame: detail.frame)
-        scroll.documentView = detail
-        scroll.hasVerticalScroller = true
-        alert.accessoryView = scroll
-        alert.addButton(withTitle: L10n.text("复制消息"))
-        alert.addButton(withTitle: L10n.text("关闭"))
-        guard let targetWindow = activeModuleWindow ?? window else { return }
-        alert.beginSheetModal(for: targetWindow) { response in
-            guard response == .alertFirstButtonReturn else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(entry.detail, forType: .string)
-        }
-    }
-
-    @objc private func refreshLogs(_ sender: Any?) { loadLogs() }
-
-    @objc private func exportLogDiagnostics(_ sender: Any?) {
-        guard let window else { return }
-        let entries = filteredLogEntries()
-        let report = "辅助功能授权：\(AXIsProcessTrusted() ? "已授权" : "未授权")\nDock 锁定：\(Self.dockLockEnabled ? "开启" : "关闭")\n\n" + LogDiagnosticReport.make(entries: entries, scope: "当前筛选结果")
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "AI-Lock-diagnostics.txt"
-        panel.title = L10n.text("导出当前筛选的诊断记录")
-        panel.message = L10n.text("已隐藏常见敏感字段。导出后请检查内容再分享。")
-        panel.beginSheetModal(for: window) { response in
-            guard response == .OK, let url = panel.url else { return }
-            do { try report.write(to: url, atomically: true, encoding: .utf8) }
-            catch { let alert = NSAlert(error: error); alert.beginSheetModal(for: window) }
-        }
-    }
-
-    private func showQuickSearch() {
-        if moduleRoot == nil { return }
-        let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
-        let eyebrow = label("QUICK FIND   /   06", size: 10, color: lime, mono: true)
-        let heading = label("快速搜索", size: 15, weight: .bold)
-        let subtitle = label("搜索应用、文件和文件夹 · 忽略大小写 · 文件搜索需完全磁盘访问", size: 12, color: muted)
-        let search = NSSearchField(); search.placeholderString = L10n.text("输入应用名或文件名…"); search.translatesAutoresizingMaskIntoConstraints = false
-        search.target = self; search.action = #selector(runQuickSearch(_:))
-        let open = toolbarButton("打开", symbol: "arrow.up.right.square", action: #selector(openSearchResult(_:))); open.isEnabled = false
-        let diskAccess = toolbarButton("磁盘访问权限", symbol: "externaldrive", action: #selector(openSearchDiskAccess(_:)))
-        let table = NSTableView(); table.rowHeight = 24; table.backgroundColor = cardColor; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        for (id, title, width): (String, String, CGFloat) in [("kind", "类型", 90), ("title", "名称", 240), ("path", "位置", 600)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = L10n.text(title); column.width = width; table.addTableColumn(column)
-        }
-        let data = SearchTableDataSource(results: []); table.dataSource = data; table.delegate = data
-        table.target = self; table.action = #selector(searchSelectionChanged(_:))
-        let scroll = NSScrollView(); scroll.translatesAutoresizingMaskIntoConstraints = false; scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.drawsBackground = false
-        let status = label("输入关键词后开始搜索。文件结果由 Spotlight 索引提供。", size: 11, color: muted)
-        [eyebrow, heading, subtitle, search, diskAccess, open, scroll, status].forEach(page.addSubview)
-        NSLayoutConstraint.activate([
-            page.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
-            eyebrow.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), eyebrow.topAnchor.constraint(equalTo: page.topAnchor, constant: 8),
-            heading.leadingAnchor.constraint(equalTo: eyebrow.leadingAnchor), heading.topAnchor.constraint(equalTo: eyebrow.bottomAnchor, constant: 3),
-            subtitle.leadingAnchor.constraint(equalTo: heading.leadingAnchor), subtitle.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 2),
-            search.leadingAnchor.constraint(equalTo: heading.leadingAnchor), search.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 5), search.trailingAnchor.constraint(equalTo: diskAccess.leadingAnchor, constant: -5),
-            diskAccess.trailingAnchor.constraint(equalTo: open.leadingAnchor, constant: -5), diskAccess.centerYAnchor.constraint(equalTo: search.centerYAnchor),
-            open.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), open.centerYAnchor.constraint(equalTo: search.centerYAnchor),
-            scroll.leadingAnchor.constraint(equalTo: heading.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 5), scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
-            status.leadingAnchor.constraint(equalTo: heading.leadingAnchor), status.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -8)
-        ])
-        searchField = search; searchResultsTable = table; searchDataSource = data; quickSearchOpenButton = open; quickSearchStatus = status
-        addModule(page)
-    }
-
-    private weak var quickSearchOpenButton: NSButton?
-    private weak var quickSearchStatus: NSTextField?
-    @objc private func runQuickSearch(_ sender: Any?) {
-        guard let field = searchField else { return }
-        let query = field.stringValue
-        quickSearchStatus?.stringValue = L10n.text(query.isEmpty ? L10n.text("输入关键词后开始搜索。") : L10n.text("正在查询应用和 Spotlight 索引…"))
-        fileSearch.search(query) { [weak self] results in
-            guard let self else { return }
-            self.searchDataSource?.results = results
-            self.searchResultsTable?.reloadData()
-            self.quickSearchStatus?.stringValue = self.fileSearch.requiresFullDiskAccess
-                ? L10n.text("当前程序的文件访问被系统拦截") + " · " + SearchDiskAccess.permissionDetail
-                : L10n.format("找到 %{0} 个结果 · 正在搜索索引与本地目录（忽略大小写）", arguments: [String(results.count)])
-        }
-    }
-    @objc private func openSearchDiskAccess(_ sender: Any?) { SearchDiskAccess.openSettings() }
-    @objc private func searchSelectionChanged(_ sender: Any?) { quickSearchOpenButton?.isEnabled = (searchResultsTable?.selectedRow ?? -1) >= 0 }
-    @objc private func openSearchResult(_ sender: Any?) {
-        guard let row = searchResultsTable?.selectedRow, let result = searchDataSource?.results, result.indices.contains(row) else { return }
-        fileSearch.open(result[row])
-    }
-
-    private weak var paletteSearchField: NSSearchField?
-    private weak var paletteTable: NSTableView?
-    private var paletteDataSource: CommandPaletteDataSource?
-
-    @objc private func filterPalette(_ sender: NSSearchField) { refreshPalette() }
-
-    private func refreshPalette() {
-        let query = paletteSearchField?.stringValue ?? ""
-        let commands = CommandPaletteCommand.all.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.keywords.localizedCaseInsensitiveContains(query) }
-        paletteDataSource?.commands = commands
-        paletteTable?.reloadData()
-        if !commands.isEmpty { paletteTable?.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
-    }
-
-    @objc private func performPaletteSelection(_ sender: Any?) {
-        guard let row = paletteTable?.selectedRow, let commands = paletteDataSource?.commands, commands.indices.contains(row) else { return }
-        let command = commands[row]
-        if let module = command.module { _ = Self.open(module) }
-        else if case .scanLargeFiles? = command.action { _ = Self.open(.files) }
-        window?.close()
-    }
-
-    private func showClipboard() {
-        let controller = ClipboardModuleController(history: clipboardHistory)
-        clipboardModule = controller
-        addModule(controller.view)
-    }
-    private func refreshClipboardTable() { clipboardModule?.refresh() }
 
 
 
-    private var filesModule: FilesModuleController?
-    private func showFileAudit() {
-        let controller = FilesModuleController()
-        filesModule = controller
-        addModule(controller.view)
-    }
 
-    private func showSettings() {
-        let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
-        let clipboardRetention = NSPopUpButton(); clipboardRetention.translatesAutoresizingMaskIntoConstraints = false
-        [1, 3, 7, 14, 30].forEach { days in
-            clipboardRetention.addItem(withTitle: L10n.format("保留 %{0} 天", arguments: [String(describing: days)]))
-            clipboardRetention.lastItem?.representedObject = days
-        }
-        clipboardRetention.selectItem(withTitle: L10n.format("保留 %{0} 天", arguments: [String(describing: clipboardHistory.retentionDays)]))
-        clipboardRetention.target = self; clipboardRetention.action = #selector(clipboardRetentionChanged(_:))
-        let retentionLabel = label("剪贴板历史保留期限", size: 13)
-        retentionLabel.font = .systemFont(ofSize: 14)
-        let cpu = numericSetting(title: L10n.text("CPU 预警阈值"), unit: "%", key: "alert.cpu", fallback: 90)
-        let memory = numericSetting(title: L10n.text("内存使用量预警阈值"), unit: "%", key: "alert.memory", fallback: 80)
-        let disk = numericSetting(title: L10n.text("磁盘可用空间阈值"), unit: "GB", key: "alert.diskGB", fallback: 10)
-        let network = numericSetting(title: L10n.text("网络速率阈值"), unit: "MB/s", key: "alert.networkMB", fallback: 50)
-        let swap = numericSetting(title: L10n.text("交换内存占用阈值"), unit: "GB", key: "alert.swapGB", fallback: 4)
-        let battery = numericSetting(title: L10n.text("低电量阈值（电池供电）"), unit: "%", key: "alert.batteryPercent", fallback: 20)
-        let thermal = numericSetting(title: L10n.text("热压力（2 偏高 / 3 严重）"), unit: "级", key: "alert.thermalLevel", fallback: 2)
-        [cpu.0, memory.0, disk.0, network.0, swap.0, battery.0, thermal.0].forEach { row in
-            row.subviews.forEach { ($0 as? NSTextField)?.font = .systemFont(ofSize: 14) }
-        }
-        alertCpuField = cpu.1; alertMemoryField = memory.1; alertDiskField = disk.1; alertNetworkField = network.1
-        alertSwapField = swap.1; alertBatteryField = battery.1; alertThermalField = thermal.1
-        let save = toolbarButton("保存阈值", symbol: "checkmark", action: #selector(saveAlertSettings(_:)))
-        let test = toolbarButton("测试预警", symbol: "bell", action: #selector(sendTestNotification(_:)))
-        [cpu.0, memory.0, disk.0, network.0, swap.0, battery.0, thermal.0, save, test, retentionLabel, clipboardRetention].forEach(page.addSubview)
-        NSLayoutConstraint.activate([
-            page.heightAnchor.constraint(greaterThanOrEqualToConstant: 510),
-            cpu.0.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), cpu.0.topAnchor.constraint(equalTo: page.topAnchor, constant: 12),
-            memory.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), memory.0.topAnchor.constraint(equalTo: cpu.0.bottomAnchor, constant: 12),
-            disk.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), disk.0.topAnchor.constraint(equalTo: memory.0.bottomAnchor, constant: 12),
-            network.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), network.0.topAnchor.constraint(equalTo: disk.0.bottomAnchor, constant: 12),
-            swap.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), swap.0.topAnchor.constraint(equalTo: network.0.bottomAnchor, constant: 12),
-            battery.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), battery.0.topAnchor.constraint(equalTo: swap.0.bottomAnchor, constant: 12),
-            thermal.0.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), thermal.0.topAnchor.constraint(equalTo: battery.0.bottomAnchor, constant: 12),
-            save.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), save.topAnchor.constraint(equalTo: thermal.0.bottomAnchor, constant: 14),
-            test.leadingAnchor.constraint(equalTo: save.trailingAnchor, constant: 12), test.centerYAnchor.constraint(equalTo: save.centerYAnchor),
-            retentionLabel.leadingAnchor.constraint(equalTo: cpu.0.leadingAnchor), retentionLabel.topAnchor.constraint(equalTo: save.bottomAnchor, constant: 20),
-            clipboardRetention.leadingAnchor.constraint(equalTo: retentionLabel.trailingAnchor, constant: 12), clipboardRetention.centerYAnchor.constraint(equalTo: retentionLabel.centerYAnchor)
-        ])
-        addModule(page)
-    }
 
-    @objc private func clipboardRetentionChanged(_ sender: NSPopUpButton) {
-        if let days = sender.selectedItem?.representedObject as? Int { clipboardHistory.retentionDays = days }
-    }
 
-    private let healthModel = MacHealthModel()
 
-    private func showCacheCleaner() {
-        let host = NSHostingView(rootView: MacHealthView(model: healthModel,
-            scan: { [weak self] in self?.scanCaches() },
-            clean: { [weak self] entries in self?.confirmCachePlan(entries) }))
-        addModule(host)
-        scanCaches()
-    }
 
-    private func updateCacheStatus() {
-        healthModel.caches = cacheEntries
-    }
 
-    @objc private func refreshCaches(_ sender: Any?) { scanCaches() }
 
-    private func scanCaches() {
-        guard !cacheScanInProgress else { return }
-        cacheScanGeneration += 1
-        let generation = cacheScanGeneration
-        cacheScanInProgress = true
-        healthModel.scanning = true
-        healthModel.phase = "正在读取硬件与磁盘…"
-        cacheEntries = []
-        healthModel.caches = []
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let hardware = HardwareSnapshot.read()
-            let snapshot = SystemMonitor().sample()
-            let inspection = MachineInspection.read()
-            let userFolders = MacHealthModel.scanUserFolders()
-            DispatchQueue.main.async {
-                guard let self, generation == self.cacheScanGeneration else { return }
-                self.healthModel.hardware = hardware
-                self.healthModel.snapshot = snapshot
-                self.healthModel.inspection = inspection
-                self.healthModel.userFolders = userFolders
-                self.healthModel.phase = "正在分析应用与启动配置…"
-            }
-            let applications = ApplicationUninstaller.scan()
-            let startup = StartupItemInspector.scan()
-            let systemCaches = MacHealthModel.measure(URL(fileURLWithPath: "/Library/Caches"))
-            let systemLibraryCachePath = URL(fileURLWithPath: "/System/Library/Caches", isDirectory: true)
-            let systemLibraryCaches = MacHealthModel.measure(systemLibraryCachePath)
-            let systemLibraryPath = URL(fileURLWithPath: "/System/Library", isDirectory: true)
-            let systemLibrary = MacHealthModel.measure(systemLibraryPath, excludingPaths: [systemLibraryCachePath.path])
-            let systemApplications = MacHealthModel.measure(URL(fileURLWithPath: "/System/Applications", isDirectory: true))
-            let systemStorage = (bytes: systemLibrary.bytes + systemApplications.bytes,
-                                 incomplete: systemLibrary.incomplete || systemApplications.incomplete)
-            let userLibraryPath = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library", isDirectory: true)
-            let userLibraryStorage = MacHealthModel.measure(
-                userLibraryPath,
-                excludingPaths: [userLibraryPath.appendingPathComponent("Caches", isDirectory: true).path]
-            )
-            var systemCacheEntries: [CacheEntry] = []
-            CacheCleaner.scanBatches(isSystem: true) { batch, _ in systemCacheEntries.append(contentsOf: batch) }
-            DispatchQueue.main.async {
-                guard let self, generation == self.cacheScanGeneration else { return }
-                self.healthModel.applications = applications
-                self.healthModel.startup = startup
-                self.healthModel.systemCaches = systemCaches
-                self.healthModel.systemLibraryCaches = systemLibraryCaches
-                self.healthModel.systemStorage = systemStorage
-                self.healthModel.userLibraryStorage = userLibraryStorage
-                self.healthModel.systemCacheEntries = systemCacheEntries.sorted { $0.size > $1.size }
-                self.healthModel.phase = "正在分析用户缓存…"
-            }
-            CacheCleaner.scanBatches { batch, isComplete in
-                DispatchQueue.main.async {
-                    guard let self, generation == self.cacheScanGeneration else { return }
-                    self.cacheEntries.append(contentsOf: batch)
-                    self.cacheEntries.sort { $0.size > $1.size }
-                    self.updateCacheStatus()
-                    if isComplete {
-                        self.cacheScanInProgress = false
-                        self.healthModel.scanning = false
-                        self.healthModel.checkedAt = Date()
-                        self.healthModel.phase = "检查完成 · 基于当前可访问的目录"
-                    }
-                }
-            }
-        }
-    }
 
-    private func confirmCachePlan(_ entries: [CacheEntry]) {
-        guard let target = activeModuleWindow ?? window else { return }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let plan = CacheCleaner.prepare(entries)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, target.isVisible else { return }
-                let alert = NSAlert(); alert.messageText = L10n.text("将所选缓存内容移入废纸篓？")
-                alert.informativeText = L10n.format("共 %{0} 个内容项，无法验证 %{1} 项。缓存目录将保留；建议先退出对应应用。清理前会再次验证路径和文件身份。可从废纸篓恢复。", arguments: [String(describing: plan.items.count), String(describing: plan.rejected.count)])
-                let listing = NSTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 180))
-                listing.isEditable = false; listing.font = .systemFont(ofSize: 11)
-                listing.string = (plan.items.map { $0.url.path } + plan.rejected.map { L10n.text("不可处理：") + $0.url.path }).joined(separator: "\n")
-                let scroll = NSScrollView(frame: listing.frame); scroll.documentView = listing; scroll.hasVerticalScroller = true
-                alert.accessoryView = scroll
-                alert.addButton(withTitle: L10n.text("取消")); alert.addButton(withTitle: L10n.text("移入废纸篓"))
-                alert.beginSheetModal(for: target) { [weak self] response in
-                    guard response == .alertSecondButtonReturn else { return }
-                    DispatchQueue.global(qos: .utility).async {
-                        let results = plan.execute()
-                        DispatchQueue.main.async {
-                            self?.refreshCaches(nil)
-                            self?.presentMessage("缓存清理结果", detail: FileOperationPlan.summary(results))
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    private func showUninstaller() {
-        let view = ApplicationUninstallerView(model: uninstallerModel,
-            refresh: { [weak self] in self?.refreshApplications(nil) },
-            uninstall: { [weak self] in self?.confirmUninstall(nil) },
-            uninstallExtensions: { [weak self] in self?.confirmExtensionUninstall(nil) })
-        let host = NSHostingView(rootView: view)
-        host.translatesAutoresizingMaskIntoConstraints = false
-        addModule(host)
-        refreshApplications(nil)
-    }
 
-    private func showLaunchItems() {
-        let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
-        let status = label("正在扫描启动项和后台常驻配置…", size: 11, color: muted)
-        let refresh = toolbarButton("重新扫描", symbol: "arrow.clockwise", action: #selector(refreshLaunchItems(_:)))
-        let table = NSTableView(); table.rowHeight = 40; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        for (id, title, width): (String, String, CGFloat) in [("label", "项目", 210), ("kind", "来源", 170), ("enabled", "启动状态", 100), ("program", "程序路径", 520)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = L10n.text(title); column.width = width; table.addTableColumn(column)
-        }
-        let source = StartupItemDataSource(items: [], table: table); table.dataSource = source; table.delegate = source
-        source.onDelete = { [weak self] item in self?.confirmDeleteStartupItem(item) }
-        source.onRepair = { [weak self] item in self?.confirmRepairStartupItem(item) }
-        let menu = NSMenu(); menu.delegate = source; table.menu = menu
-        let scroll = NSScrollView(); scroll.translatesAutoresizingMaskIntoConstraints = false; scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.drawsBackground = false
-        let note = label("显示 LaunchAgents/LaunchDaemons 配置与诊断；触发条件不代表已加载或运行。右键查看修复建议；明确失效的用户配置可确认后备份移走。现代登录项请在系统设置查看。", size: 11, color: muted); note.lineBreakMode = .byWordWrapping
-        let systemSettings = toolbarButton("系统登录项设置", symbol: "gearshape", action: #selector(openLoginItemSettings(_:)))
-        [refresh, systemSettings, scroll, status, note].forEach(page.addSubview)
-        NSLayoutConstraint.activate([
-            page.heightAnchor.constraint(greaterThanOrEqualToConstant: 400), refresh.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), refresh.topAnchor.constraint(equalTo: page.topAnchor, constant: 8),
-            systemSettings.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), systemSettings.centerYAnchor.constraint(equalTo: refresh.centerYAnchor),
-            scroll.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), scroll.topAnchor.constraint(equalTo: refresh.bottomAnchor, constant: 8), scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
-            status.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), status.bottomAnchor.constraint(equalTo: note.topAnchor, constant: -4),
-            note.leadingAnchor.constraint(equalTo: status.leadingAnchor), note.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), note.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -8)
-        ])
-        launchItemsDataSource = source; launchItemsStatus = status; addModule(page); refreshLaunchItems(nil)
-    }
 
-    @objc private func openLoginItemSettings(_ sender: Any?) { SMAppService.openSystemSettingsLoginItems() }
 
-    private var launchItemsDataSource: StartupItemDataSource?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     private weak var launchItemsStatus: NSTextField?
     @objc private func refreshLaunchItems(_ sender: Any?) {
         launchItemsStatus?.stringValue = L10n.text("正在读取 plist…")
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let items = StartupItemInspector.scan()
             DispatchQueue.main.async {
-                self?.launchItemsDataSource?.items = items
-                self?.launchItemsDataSource?.reload()
                 self?.launchItemsStatus?.stringValue = L10n.format("发现 %{0} 个配置项目（含异常项）", arguments: [String(describing: items.count)])
             }
         }
     }
 
-    private func confirmRepairStartupItem(_ item: StartupItem) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = L10n.format("启动项修复建议：%{0}", arguments: [String(describing: item.label)])
-        alert.informativeText = L10n.format("%{0}\n\n%{1}\n\n原路径：%{2}", arguments: [L10n.statusList(item.startupStatus), L10n.text(item.repairAdvice), String(describing: item.url.path)])
-        alert.addButton(withTitle: L10n.text("关闭"))
-        if item.repairData != nil {
-            alert.informativeText += L10n.text("\n\n确认后保存完整配置备份及原路径，再移走原配置。不会立即停止已加载服务。")
-            alert.addButton(withTitle: L10n.text("备份并移走配置"))
-        }
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertSecondButtonReturn else { return }
-            DispatchQueue.global(qos: .utility).async {
-                let result = Result { try StartupItemRepair.quarantine(item) }
-                DispatchQueue.main.async {
-                    let report = NSAlert()
-                    switch result {
-                    case .success(let backup):
-                        report.messageText = L10n.text("配置已备份并移走")
-                        let stillExists = FileManager.default.fileExists(atPath: item.url.path)
-                        report.informativeText = L10n.format("备份：%{0}\n原路径：%{1}\n\n%{2}恢复时将备份复制回原路径，再通过所属应用重新启用。已加载服务可能继续运行。", arguments: [String(describing: backup.path), String(describing: item.url.path), String(describing: stillExists ? L10n.text("原路径再次出现配置，请重新检查。") : L10n.text("已验证原配置路径不存在。"))])
-                    case .failure(let error):
-                        report.messageText = L10n.text("未完成修复")
-                        report.informativeText = L10n.text(error.localizedDescription)
-                    }
-                    self?.refreshLaunchItems(nil)
-                    report.beginSheetModal(for: window)
-                }
-            }
-        }
-    }
 
-    private func confirmDeleteStartupItem(_ item: StartupItem) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = L10n.format("删除启动项“%{0}”？", arguments: [String(describing: item.label)])
-        alert.informativeText = L10n.format("将以下配置移入废纸篓：\n%{0}\n\n不会删除应用或立即停止当前服务。应用可能重新创建此配置；系统目录可能需要管理员权限。", arguments: [String(describing: item.url.path)])
-        alert.addButton(withTitle: L10n.text("取消"))
-        alert.addButton(withTitle: L10n.text("移入废纸篓"))
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertSecondButtonReturn else { return }
-            NSWorkspace.shared.recycle([item.url]) { _, recycleError in
-                let result: Error?
-                if let recycleError {
-                    result = Self.deleteStartupItemWithFinder(item.url) ?? recycleError
-                } else {
-                    result = nil
-                }
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if let result {
-                        let failure = NSAlert()
-                        failure.messageText = L10n.text("启动项未删除")
-                        failure.informativeText = L10n.text(result.localizedDescription)
-                        failure.beginSheetModal(for: window)
-                    } else {
-                        self.refreshLaunchItems(nil)
-                    }
-                }
-            }
-        }
-    }
+
+
+
+
 
     /// Finder can request administrator authorization when the current process
     /// cannot move a LaunchAgent plist to the user's Trash itself.
-    private static func deleteStartupItemWithFinder(_ url: URL) -> Error? {
+    /// 移入废纸篓失败（通常因权限不足）时改由 Finder 处理，让系统弹出授权。
+    /// 由启动项页面调用，因此不设为 private。
+    static func deleteStartupItemWithFinder(_ url: URL) -> Error? {
         let escapedPath = url.path
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -1106,258 +614,41 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
                        userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    private let uninstallerModel = ApplicationUninstallerModel()
 
-    @objc private func refreshApplications(_ sender: Any?) {
-        guard !uninstallerModel.busy, !uninstallerModel.scanning else { return }
-        uninstallerModel.scanning = true
-        uninstallerModel.status = "正在查找应用…"
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let extensionItems = ExtensionUninstaller.scan()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.uninstallerModel.extensionItems = extensionItems
-                self.uninstallerModel.selectedExtensions.formIntersection(Set(extensionItems.map(\.id)))
-            }
-            var found = Set<String>()
-            ApplicationUninstaller.scanIncrementally { batch in
-                found.formUnion(batch.map(\.id))
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    // Update existing cards in place so size updates do not reorder the grid.
-                    var indices = Dictionary(uniqueKeysWithValues: self.uninstallerModel.apps.enumerated().map { ($0.element.id, $0.offset) })
-                    var apps = self.uninstallerModel.apps
-                    for app in batch {
-                        if let index = indices[app.id] { apps[index] = app }
-                        else { indices[app.id] = apps.count; apps.append(app) }
-                    }
-                    self.uninstallerModel.apps = apps
-                    let calculated = apps.filter(\.sizeIsCalculated).count
-                    self.uninstallerModel.status = "已显示 \(apps.count) 个应用 · 正在加载（已计算 \(calculated) 个大小）"
-                }
-            }
-            let discovered = found
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.uninstallerModel.apps.removeAll { !discovered.contains($0.id) }
-                self.uninstallerModel.selected.formIntersection(discovered)
-                self.uninstallerModel.scanning = false
-                self.uninstallerModel.status = "找到 \(discovered.count) 个应用 · \(extensionItems.count) 个扩展项目"
-            }
-        }
-    }
 
-    @objc private func confirmExtensionUninstall(_ sender: Any?) {
-        let items = uninstallerModel.extensionItems.filter { uninstallerModel.selectedExtensions.contains($0.id) }
-        guard !items.isEmpty, !uninstallerModel.busy, !uninstallerModel.scanning, let target = window else { return }
-        let plan = ExtensionUninstaller.prepareUninstall(items)
-        uninstallerModel.busy = true
-        let approvedPaths = plan.items.map { $0.url.path }
-        let rejectedPaths = plan.rejected.map { "\($0.url.path) — \($0.error ?? "无法验证")" }
-        let alert = NSAlert()
-        alert.messageText = L10n.format("移除所选 %{0} 个扩展项目？", arguments: [String(describing: items.count)])
-        alert.informativeText = L10n.text((approvedPaths + rejectedPaths).joined(separator: "\n"))
-            + "\n" + L10n.text("确认后，所选项目将移入废纸篓。")
-        alert.addButton(withTitle: L10n.text("取消"))
-        alert.addButton(withTitle: L10n.text("移入废纸篓"))
-        alert.beginSheetModal(for: target) { [weak self] response in
-            guard let self else { return }
-            guard response == .alertSecondButtonReturn else {
-                self.uninstallerModel.busy = false
-                return
-            }
-            self.uninstallerModel.status = "正在移入废纸篓…"
-            DispatchQueue.global(qos: .utility).async { [weak self] in
-                let summary = FileOperationPlan.summary(plan.execute())
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.uninstallerModel.busy = false
-                    self.presentMessage("卸载结果", detail: summary)
-                    self.refreshApplications(nil)
-                }
-            }
-        }
-    }
 
-    @objc private func confirmUninstall(_ sender: Any?) {
-        let apps = uninstallerModel.apps.filter { uninstallerModel.selected.contains($0.id) }
-        guard !apps.isEmpty, !uninstallerModel.busy, !uninstallerModel.scanning, let target = window else { return }
-        uninstallerModel.busy = true
-        uninstallerModel.status = "正在检查关联项目…"
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let related = apps.map { ApplicationUninstaller.relatedItems(for: $0) }
-            let plans = zip(apps, related).map { ApplicationUninstaller.prepareUninstall($0.0, relatedItems: $0.1) }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard target.isVisible else { self.uninstallerModel.busy = false; return }
-                let alert = NSAlert()
-                alert.messageText = L10n.format("卸载所选 %{0} 个应用？", arguments: [String(describing: apps.count)])
-                alert.informativeText = L10n.text(apps.map { "\($0.name)（\(CacheCleaner.formattedSize($0.size))）" }.joined(separator: "\n"))
-                    + "\n" + L10n.text("应用及勾选的关联项将移入废纸篓。请先保存数据并退出这些应用。")
-                let list = NSStackView(); list.orientation = .vertical; list.alignment = .leading; list.spacing = 6
-                let checkboxes = zip(apps, related).map { app, items in
-                    items.map { item -> NSButton in
-                        let checkbox = NSButton(checkboxWithTitle: L10n.text("\(app.name)：\(item.url.path)（\(CacheCleaner.formattedSize(item.size))）"), target: nil, action: nil)
-                        checkbox.state = .off; checkbox.toolTip = L10n.text(item.url.path)
-                        list.addArrangedSubview(checkbox)
-                        return checkbox
-                    }
-                }
-                let count = related.reduce(0) { $0 + $1.count }
-                if count > 0 {
-                    list.frame = NSRect(x: 0, y: 0, width: 560, height: CGFloat(count * 28))
-                    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: CGFloat(min(count * 28, 200))))
-                    scroll.documentView = list; scroll.hasVerticalScroller = true
-                    alert.accessoryView = scroll
-                }
-                alert.addButton(withTitle: L10n.text("取消")); alert.addButton(withTitle: L10n.text("一键卸载"))
-                alert.beginSheetModal(for: target) { [weak self] response in
-                    guard let self else { return }
-                    guard response == .alertSecondButtonReturn else {
-                        self.uninstallerModel.busy = false
-                        self.uninstallerModel.status = "已取消卸载"
-                        return
-                    }
-                    let selectedPaths = checkboxes.map { Set($0.filter { $0.state == .on }.compactMap(\.toolTip)) }
-                    self.uninstallerModel.status = "正在移入废纸篓…"
-                    DispatchQueue.global(qos: .utility).async { [weak self] in
-                        var results: [FileActionResult] = []
-                        var completedPaths = Set<String>()
-                        for (index, plan) in plans.enumerated() {
-                            let paths = selectedPaths[index].subtracting(completedPaths)
-                            let selectedPlan = FileOperationPlan(items: plan.related.items.filter { paths.contains($0.url.path) },
-                                rejected: plan.related.rejected.filter { paths.contains($0.url.path) })
-                            let result = ApplicationUninstaller.UninstallPlan(app: plan.app, application: plan.application, related: selectedPlan).execute()
-                            results += result
-                            completedPaths.formUnion(result.filter(\.succeeded).map { $0.url.path })
-                        }
-                        let summary = FileOperationPlan.summary(results)
-                        DispatchQueue.main.async {
-                            guard let self else { return }
-                            self.uninstallerModel.busy = false
-                            self.refreshApplications(nil)
-                            self.presentMessage("卸载结果", detail: summary)
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    private func showDockLockSettings() { return }
-    /*
-        let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
-        let title = label("DockLock 设置", size: 20, weight: .bold)
-        let targetLabel = label("目标显示器", size: 13)
-        let target = NSPopUpButton(); target.translatesAutoresizingMaskIntoConstraints = false
-        target.addItem(withTitle: L10n.text("自动（主屏优先）"))
-        target.lastItem?.representedObject = "builtin"
-        for display in Self.lockController?.screenChoices ?? [] {
-            target.addItem(withTitle: L10n.text("\(display.name) · \(display.size)"))
-            target.lastItem?.representedObject = String(display.id)
-        }
-        target.selectItem(at: 0)
-        if let setting = Self.lockController?.targetSetting,
-           let index = target.itemArray.firstIndex(where: { ($0.representedObject as? String) == setting }) {
-            target.selectItem(at: index)
-        }
-        target.target = self; target.action = #selector(dockLockTargetChanged(_:))
 
-        let margin = numericSetting(title: L10n.text("屏幕边缘拦截厚度"), unit: "pt", key: "edgeMargin", fallback: 6)
-        let autoSnap = LocalizedButton(checkboxWithTitle: L10n.text("Dock 偏离时自动拉回"), target: self, action: #selector(dockLockSnapChanged(_:)))
-        autoSnap.state = AppSettings.shared.autoSnap ? .on : .off
-        let enabled = LocalizedButton(checkboxWithTitle: L10n.text("启用 DockLock"), target: self, action: #selector(dockLockEnabledChanged(_:)))
-        enabled.state = (Self.lockController?.enabled ?? false) ? .on : .off
-        let privacyTitle = label("显示器隐私黑屏", size: 15, weight: .semibold)
-        let privacyHint = label("点击显示器预览即可黑屏，再次点击恢复显示。", size: 12)
-        let displays = Self.lockController?.screenChoices ?? []
-        let displayCards = NSStackView()
-        displayCards.translatesAutoresizingMaskIntoConstraints = false
-        displayCards.orientation = .horizontal
-        displayCards.alignment = .top
-        displayCards.distribution = .fillEqually
-        displayCards.spacing = 12
-        for display in displays {
-            displayCards.addArrangedSubview(DisplayPrivacyCard(display: display))
-        }
-        [title, targetLabel, target, margin.0, autoSnap, enabled, privacyTitle, privacyHint, displayCards].forEach(page.addSubview)
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 24), title.topAnchor.constraint(equalTo: page.topAnchor, constant: 24),
-            margin.0.leadingAnchor.constraint(equalTo: title.leadingAnchor), margin.0.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 24),
-            targetLabel.leadingAnchor.constraint(equalTo: title.leadingAnchor), targetLabel.topAnchor.constraint(equalTo: margin.0.bottomAnchor, constant: 20),
-            target.leadingAnchor.constraint(equalTo: targetLabel.trailingAnchor, constant: 16), target.centerYAnchor.constraint(equalTo: targetLabel.centerYAnchor), target.widthAnchor.constraint(equalToConstant: 280),
-            autoSnap.leadingAnchor.constraint(equalTo: title.leadingAnchor), autoSnap.topAnchor.constraint(equalTo: targetLabel.bottomAnchor, constant: 18),
-            enabled.leadingAnchor.constraint(equalTo: title.leadingAnchor), enabled.topAnchor.constraint(equalTo: autoSnap.bottomAnchor, constant: 12),
-            privacyTitle.leadingAnchor.constraint(equalTo: title.leadingAnchor), privacyTitle.topAnchor.constraint(equalTo: enabled.bottomAnchor, constant: 26),
-            privacyHint.leadingAnchor.constraint(equalTo: title.leadingAnchor), privacyHint.topAnchor.constraint(equalTo: privacyTitle.bottomAnchor, constant: 6),
-            displayCards.leadingAnchor.constraint(equalTo: title.leadingAnchor), displayCards.trailingAnchor.constraint(lessThanOrEqualTo: page.trailingAnchor, constant: -24),
-            displayCards.topAnchor.constraint(equalTo: privacyHint.bottomAnchor, constant: 12), displayCards.heightAnchor.constraint(equalToConstant: 154)
-        ])
-        addModule(page)
-    }
 
-    */
-    @objc private func dockLockTargetChanged(_ sender: NSPopUpButton) {
-        guard let value = sender.selectedItem?.representedObject as? String else { return }
-        Self.lockController?.setTarget(value)
-    }
 
-    @objc private func dockLockSnapChanged(_ sender: NSButton) {
-        AppSettings.shared.autoSnap = sender.state == .on
-    }
 
-    @objc private func dockLockEnabledChanged(_ sender: NSButton) {
-        sender.state = (Self.lockController?.toggleEnabled() ?? false) ? .on : .off
-    }
+
+
+
+
+
+
+
+
+
 
     @objc fileprivate func toggleDisplayPrivacy(_ sender: NSButton) {
         DisplayPrivacyManager.shared.toggle(CGDirectDisplayID(sender.tag))
     }
 
-    private func numericSetting(title: String, unit: String, key: String, fallback: Double) -> (NSView, NSTextField) {
-        let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
-        let name = label(title, size: 13)
-        let field = NSTextField(string: "\(SettingValue.read(key, fallback: fallback))")
-        field.translatesAutoresizingMaskIntoConstraints = false; field.alignment = .right
-        let unitLabel = label(unit, size: 13)
-        row.addSubview(name); row.addSubview(field); row.addSubview(unitLabel)
-        NSLayoutConstraint.activate([row.widthAnchor.constraint(equalToConstant: 300), row.heightAnchor.constraint(equalToConstant: 22), name.leadingAnchor.constraint(equalTo: row.leadingAnchor), name.centerYAnchor.constraint(equalTo: row.centerYAnchor), unitLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor), unitLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor), field.trailingAnchor.constraint(equalTo: unitLabel.leadingAnchor, constant: -6), field.centerYAnchor.constraint(equalTo: row.centerYAnchor), field.widthAnchor.constraint(equalToConstant: 58)])
-        return (row, field)
-    }
 
-    @objc private func saveAlertSettings(_ sender: Any?) {
-        let fields = [("alert.cpu", alertCpuField), ("alert.memory", alertMemoryField), ("alert.diskGB", alertDiskField), ("alert.networkMB", alertNetworkField), ("alert.swapGB", alertSwapField), ("alert.batteryPercent", alertBatteryField), ("alert.thermalLevel", alertThermalField)]
-        let values = fields.compactMap { key, field -> (String, Double)? in
-            guard let text = field?.stringValue, let value = Double(text) else { return nil }
-            return (key, value)
-        }
-        guard values.count == fields.count, SettingValue.saveThresholds(values) else {
-            presentMessage("阈值未保存", detail: "CPU/内存/电量范围为 1–100%；磁盘/网络/交换内存为 0.1–1000000；热压力级别为 2 或 3。")
-            return
-        }
-        presentMessage("阈值已保存", detail: "新阈值将在下一次后台采样时生效。")
-    }
 
-    private func presentMessage(_ title: String, detail: String) {
-        guard let window else { return }
-        let alert = NSAlert(); alert.messageText = L10n.text(title); alert.informativeText = L10n.text(detail)
-        alert.beginSheetModal(for: window)
-    }
+
+
+
+
 
     @objc private func sendTestNotification(_ sender: Any?) {
         NotificationCenter.default.post(name: .resourceAlertPreview, object: nil)
     }
 
-    private func detailPage(title: String, number: String, status: String, detail: String) -> NSView {
-        let page = NSView(); page.translatesAutoresizingMaskIntoConstraints = false
-        let eyebrow = label("AI LOCK   /   \(number)", size: 10, color: lime, mono: true)
-        let heading = label(title, size: 15, weight: .bold)
-        let statusLabel = label(status, size: 10, weight: .semibold, color: NSColor.systemOrange)
-        let body = LocalizedLabel(wrappingLabelWithString: L10n.text(detail)); body.font = .systemFont(ofSize: 9); body.textColor = muted; body.translatesAutoresizingMaskIntoConstraints = false
-        [eyebrow, heading, statusLabel, body].forEach(page.addSubview)
-        NSLayoutConstraint.activate([eyebrow.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 10), eyebrow.topAnchor.constraint(equalTo: page.topAnchor, constant: 8), heading.leadingAnchor.constraint(equalTo: eyebrow.leadingAnchor), heading.topAnchor.constraint(equalTo: eyebrow.bottomAnchor, constant: 3), statusLabel.leadingAnchor.constraint(equalTo: heading.leadingAnchor), statusLabel.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 4), body.leadingAnchor.constraint(equalTo: heading.leadingAnchor), body.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -10), body.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 4)])
-        return page
-    }
+
+
 
 
 
@@ -1412,10 +703,8 @@ struct DashboardOverviewView: View {
     @State private var autoSnap = AppSettings.shared.autoSnap
     @State private var cpuAlertThreshold = AppSettings.shared.alerts.cpu
     @State private var memoryAlertThreshold = AppSettings.shared.alerts.memory
-    @State private var diskAlertThreshold = AppSettings.shared.alerts.diskGB
+    @State private var diskAlertThreshold = AppSettings.shared.alerts.diskFreePercent
     @State private var networkAlertThreshold = AppSettings.shared.alerts.networkMB
-    @State private var swapAlertThreshold = AppSettings.shared.alerts.swapGB
-    @AppStorage("alert.swap.enabled") private var swapMonitoringEnabled = true
     @State private var batteryAlertThreshold = AppSettings.shared.alerts.batteryPercent
     @State private var thermalAlertThreshold = AppSettings.shared.alerts.thermalLevel
     private var statusMetrics: Set<String> {
@@ -1670,14 +959,12 @@ struct DashboardOverviewView: View {
                     Text(L10n.text(english ? "Resource Alerts" : L10n.text("监控预警")))
                     thresholdRow(english ? "CPU threshold" : "CPU 预警阈值", unit: "%", value: $cpuAlertThreshold)
                     thresholdRow(english ? "Memory usage threshold" : "内存使用量预警阈值", unit: "%", value: $memoryAlertThreshold)
-                    thresholdRow(english ? "Free disk threshold" : "磁盘可用空间阈值", unit: "GB", value: $diskAlertThreshold)
+                    thresholdRow(english ? "Free disk threshold" : "磁盘可用空间阈值", unit: "%", value: $diskAlertThreshold)
                     thresholdRow(english ? "Network rate threshold" : "网络速率阈值", unit: "MB/s", value: $networkAlertThreshold)
-                    Toggle(L10n.text(english ? "Monitor swap usage" : "监视交换内存预警"), isOn: $swapMonitoringEnabled)
-                    thresholdRow(english ? "Swap usage threshold" : "交换内存占用阈值", unit: "GB", value: $swapAlertThreshold)
                     thresholdRow(english ? "Low battery (on battery power)" : "低电量阈值（仅电池供电）", unit: "%", value: $batteryAlertThreshold)
-                    Picker(L10n.text(english ? "Thermal pressure" : L10n.text("系统热压力预警")), selection: $thermalAlertThreshold) {
-                        Text(L10n.text(english ? "Serious or higher" : L10n.text("偏高及以上"))).tag(2.0)
-                        Text(L10n.text(english ? "Critical only" : L10n.text("仅严重"))).tag(3.0)
+                    Picker(L10n.text(english ? "Temperature alert" : "温度预警"), selection: $thermalAlertThreshold) {
+                        Text(L10n.text(english ? "High temperature" : "高温时提醒")).tag(2.0)
+                        Text(L10n.text(english ? "Severe overheating" : "严重过热时提醒")).tag(3.0)
                     }
                     HStack {
                         Button(L10n.text(english ? "Save Alert Thresholds" : L10n.text("保存预警阈值"))) { saveAlertThresholds() }
@@ -1810,9 +1097,9 @@ struct DashboardOverviewView: View {
 
     private var diskIsLow: Bool {
         guard snapshot.diskTotal > 0 else { return false }
-        guard snapshot.diskTotal > snapshot.diskUsed else { return true }
-        let freeGB = Double(snapshot.diskTotal - snapshot.diskUsed) / 1_000_000_000
-        return freeGB < alerts.threshold(for: .diskGB)
+        let freeBytes = snapshot.diskTotal > snapshot.diskUsed ? snapshot.diskTotal - snapshot.diskUsed : 0
+        let freePercent = Double(freeBytes) / Double(snapshot.diskTotal) * 100
+        return freePercent <= alerts.threshold(for: .diskFreePercent)
     }
 
     private func rate(_ bytes: UInt64) -> String {
@@ -1840,8 +1127,8 @@ struct DashboardOverviewView: View {
     }
 
     private func saveAlertThresholds() {
-        let saved = SettingValue.saveThresholds([("alert.cpu", cpuAlertThreshold), ("alert.memory", memoryAlertThreshold), ("alert.diskGB", diskAlertThreshold), ("alert.networkMB", networkAlertThreshold), ("alert.swapGB", swapAlertThreshold), ("alert.batteryPercent", batteryAlertThreshold), ("alert.thermalLevel", thermalAlertThreshold)])
-        notificationStatus = saved ? "阈值已保存" : "阈值无效：CPU/内存/电量 1–100%，磁盘/网络/交换内存 0.1–1000000。"
+        let saved = SettingValue.saveThresholds([("alert.cpu", cpuAlertThreshold), ("alert.memory", memoryAlertThreshold), ("alert.diskFreePercent", diskAlertThreshold), ("alert.networkMB", networkAlertThreshold), ("alert.batteryPercent", batteryAlertThreshold), ("alert.thermalLevel", thermalAlertThreshold)])
+        notificationStatus = saved ? "阈值已保存" : "阈值无效：CPU/内存/电量/磁盘 1–100%，网络 0.1–1000 MB/s。"
     }
 
     private func sendTestNotification() {
@@ -2095,7 +1382,7 @@ private struct HotkeySettingsView: View {
     }
 }
 
-private struct QuickActionShortcutRecorder: NSViewRepresentable {
+struct QuickActionShortcutRecorder: NSViewRepresentable {
     let title: String
     let isCapturing: Bool
     let recordingChanged: (Bool) -> Void
@@ -2123,7 +1410,7 @@ private struct QuickActionShortcutRecorder: NSViewRepresentable {
     }
 }
 
-private final class QuickActionShortcutCaptureButton: NSButton {
+final class QuickActionShortcutCaptureButton: NSButton {
     var isCapturing = false
     var recordingChanged: ((Bool) -> Void)?
     var onCapture: ((UInt16, NSEvent.ModifierFlags) -> Void)?
@@ -2153,13 +1440,14 @@ private final class QuickActionShortcutCaptureButton: NSButton {
 
 private final class PreferencesWindowController: NSWindowController {
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = L10n.text("设置")
-        window.minSize = NSSize(width: 680, height: 480)
+        window.minSize = NSSize(width: 900, height: 540)
+        window.backgroundColor = canvas
         window.appearance = DashboardWindow.preferredAppearance
-        window.contentViewController = NSHostingController(rootView: PreferencesWindowView())
+        window.contentViewController = NSHostingController(rootView: LumenPreferencesView())
         super.init(window: window)
         NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage), name: L10n.changed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(refreshAppearance),
@@ -2200,10 +1488,8 @@ private struct PreferencesWindowView: View {
     @AppStorage("overview.statusMetrics") private var statusMetricsRaw = ""
     @State private var cpu = AppSettings.shared.alerts.cpu
     @State private var memory = AppSettings.shared.alerts.memory
-    @State private var disk = AppSettings.shared.alerts.diskGB
+    @State private var disk = AppSettings.shared.alerts.diskFreePercent
     @State private var network = AppSettings.shared.alerts.networkMB
-    @State private var swap = AppSettings.shared.alerts.swapGB
-    @AppStorage("alert.swap.enabled") private var swapMonitoringEnabled = true
     @State private var battery = AppSettings.shared.alerts.batteryPercent
     @State private var thermal = AppSettings.shared.alerts.thermalLevel
     @AppStorage("alert.camera.enabled") private var cameraMonitoringEnabled = false
@@ -2316,29 +1602,24 @@ private struct PreferencesWindowView: View {
                     }
                         .onChange(of: microphoneMonitoringEnabled) { _, _ in NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
                 }
-                Toggle(isOn: $swapMonitoringEnabled) {
-                    Label(L10n.text(english ? "Monitor swap usage" : "监视交换内存预警"), systemImage: "arrow.left.arrow.right")
-                }
-
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), alignment: .leading)], alignment: .leading, spacing: 10) {
                     thresholdRow("CPU 预警阈值", symbol: "cpu", unit: "%", value: $cpu)
                     thresholdRow("内存使用量预警阈值", symbol: "memorychip", unit: "%", value: $memory)
-                    thresholdRow("磁盘可用空间阈值", symbol: "internaldrive", unit: "GB", value: $disk)
+                    thresholdRow("磁盘可用空间阈值", symbol: "internaldrive", unit: "%", value: $disk)
                     thresholdRow("网络速率阈值", symbol: "network", unit: "MB/s", value: $network)
-                    thresholdRow("交换内存占用阈值", symbol: "arrow.left.arrow.right", unit: "GB", value: $swap)
                     thresholdRow("低电量阈值（仅电池供电）", symbol: "battery.25percent", unit: "%", value: $battery)
                 }
                 HStack(spacing: 10) {
-                    Label(L10n.text("系统热压力预警"), systemImage: "thermometer")
-                    Picker(L10n.text("系统热压力预警"), selection: $thermal) {
-                        Text(L10n.text("偏高及以上")).tag(2.0)
-                        Text(L10n.text("仅严重")).tag(3.0)
+                    Label(L10n.text("温度预警"), systemImage: "thermometer")
+                    Picker(L10n.text("温度预警"), selection: $thermal) {
+                        Text(L10n.text("高温时提醒")).tag(2.0)
+                        Text(L10n.text("严重过热时提醒")).tag(3.0)
                     }
                     .labelsHidden()
                     .fixedSize()
                 }
                 HStack {
-                    Button(L10n.text("保存预警阈值")) { notificationStatus = SettingValue.saveThresholds([("alert.cpu", cpu), ("alert.memory", memory), ("alert.diskGB", disk), ("alert.networkMB", network), ("alert.swapGB", swap), ("alert.batteryPercent", battery), ("alert.thermalLevel", thermal)]) ? "阈值已保存" : "阈值无效：CPU/内存/电量 1–100%，磁盘/网络/交换内存 0.1–1000000。" }
+                    Button(L10n.text("保存预警阈值")) { notificationStatus = SettingValue.saveThresholds([("alert.cpu", cpu), ("alert.memory", memory), ("alert.diskFreePercent", disk), ("alert.networkMB", network), ("alert.batteryPercent", battery), ("alert.thermalLevel", thermal)]) ? "阈值已保存" : "阈值无效：CPU/内存/电量/磁盘 1–100%，网络 0.1–1000 MB/s。" }
                     Button(L10n.text("测试预警")) { sendTestNotification() }
                 }
                 if !notificationStatus.isEmpty { Text(L10n.text(notificationStatus)).font(.caption).foregroundStyle(.secondary) }
@@ -2431,9 +1712,7 @@ private struct PreferencesWindowView: View {
         ["DockLock 设置": "dock.rectangle", "快捷操作": "command", "菜单栏收纳": "menubar.rectangle", "文件活动": "doc.text.magnifyingglass", "应用卸载": "app.dashed", "启动项检查": "rectangle.stack.badge.play", "进程管理": "cpu", "网络活动": "network", "网络诊断": "speedometer", "录屏工具": "record.circle", "显示器控制": "sun.max", "系统日志": "list.bullet.rectangle", "剪贴板历史": "clipboard", "系统健康检查": "stethoscope", "设置": "gearshape"][module.rawValue] ?? "square"
     }
 
-    private func moduleEnglishTitle(_ module: DashboardWindow.Module) -> String {
-        ["DockLock 设置": "DockLock Settings", "快捷操作": "Quick Actions", "文件活动": "File Activity", "应用卸载": "Uninstaller", "启动项检查": "Startup Items", "进程管理": "Processes", "网络活动": "Network", "网络诊断": "Network Diagnostics", "录屏工具": "Screen Recorder", "显示器控制": "Display Control", "系统日志": "App Logs", "应用日志": "App Logs", "剪贴板历史": "Clipboard", "系统健康检查": "System Health", "设置": "Settings"][module.rawValue] ?? module.rawValue
-    }
+
 
     private func visibilityBinding(_ module: DashboardWindow.Module) -> Binding<Bool> {
         Binding(get: { visibleModulesRaw.isEmpty || visibleModulesRaw.split(separator: ",").contains(Substring(module.rawValue)) }, set: { visible in
@@ -4034,6 +3313,136 @@ private struct MacHealthView: View {
         }.padding(20).frame(minWidth: 0, maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
+    }
+}
+
+/// Restores the original Mac Health experience inside the current module shell.
+struct LegacyMacHealthPage: View {
+    @StateObject private var controller = LegacyMacHealthController()
+
+    var body: some View {
+        MacHealthView(model: controller.model, scan: controller.scan, clean: controller.clean)
+            .onAppear {
+                if controller.model.checkedAt == nil { controller.scan() }
+            }
+    }
+}
+
+private final class LegacyMacHealthController: ObservableObject {
+    let model = MacHealthModel()
+    private var cacheEntries: [CacheEntry] = []
+    private var scanGeneration = 0
+    private var scanInProgress = false
+
+    func scan() {
+        guard !scanInProgress else { return }
+        scanGeneration += 1
+        let generation = scanGeneration
+        scanInProgress = true
+        model.scanning = true
+        model.phase = "正在读取硬件与磁盘…"
+        cacheEntries = []
+        model.caches = []
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let hardware = HardwareSnapshot.read()
+            let snapshot = SystemMonitor().sample()
+            let inspection = MachineInspection.read()
+            let userFolders = MacHealthModel.scanUserFolders()
+            DispatchQueue.main.async {
+                guard generation == self.scanGeneration else { return }
+                self.model.hardware = hardware
+                self.model.snapshot = snapshot
+                self.model.inspection = inspection
+                self.model.userFolders = userFolders
+                self.model.phase = "正在分析应用与启动配置…"
+            }
+
+            let applications = ApplicationUninstaller.scan()
+            let startup = StartupItemInspector.scan()
+            let systemCaches = MacHealthModel.measure(URL(fileURLWithPath: "/Library/Caches"))
+            let systemLibraryCachePath = URL(fileURLWithPath: "/System/Library/Caches", isDirectory: true)
+            let systemLibraryCaches = MacHealthModel.measure(systemLibraryCachePath)
+            let systemLibraryPath = URL(fileURLWithPath: "/System/Library", isDirectory: true)
+            let systemLibrary = MacHealthModel.measure(systemLibraryPath, excludingPaths: [systemLibraryCachePath.path])
+            let systemApplications = MacHealthModel.measure(URL(fileURLWithPath: "/System/Applications", isDirectory: true))
+            let systemStorage = (bytes: systemLibrary.bytes + systemApplications.bytes,
+                                 incomplete: systemLibrary.incomplete || systemApplications.incomplete)
+            let userLibraryPath = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library", isDirectory: true)
+            let userLibraryStorage = MacHealthModel.measure(
+                userLibraryPath,
+                excludingPaths: [userLibraryPath.appendingPathComponent("Caches", isDirectory: true).path]
+            )
+            var systemCacheEntries: [CacheEntry] = []
+            CacheCleaner.scanBatches(isSystem: true) { batch, _ in systemCacheEntries.append(contentsOf: batch) }
+            DispatchQueue.main.async {
+                guard generation == self.scanGeneration else { return }
+                self.model.applications = applications
+                self.model.startup = startup
+                self.model.systemCaches = systemCaches
+                self.model.systemLibraryCaches = systemLibraryCaches
+                self.model.systemStorage = systemStorage
+                self.model.userLibraryStorage = userLibraryStorage
+                self.model.systemCacheEntries = systemCacheEntries.sorted { $0.size > $1.size }
+                self.model.phase = "正在分析用户缓存…"
+            }
+            CacheCleaner.scanBatches { batch, isComplete in
+                DispatchQueue.main.async {
+                    guard generation == self.scanGeneration else { return }
+                    self.cacheEntries.append(contentsOf: batch)
+                    self.cacheEntries.sort { $0.size > $1.size }
+                    self.model.caches = self.cacheEntries
+                    if isComplete {
+                        self.scanInProgress = false
+                        self.model.scanning = false
+                        self.model.checkedAt = Date()
+                        self.model.phase = "检查完成 · 基于当前可访问的目录"
+                    }
+                }
+            }
+        }
+    }
+
+    func clean(_ entries: [CacheEntry]) {
+        guard let target = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let plan = CacheCleaner.prepare(entries)
+            DispatchQueue.main.async {
+                guard let self, target.isVisible else { return }
+                let alert = NSAlert()
+                alert.messageText = L10n.text("将所选缓存内容移入废纸篓？")
+                alert.informativeText = L10n.format(
+                    "共 %{0} 个内容项，无法验证 %{1} 项。缓存目录将保留；建议先退出对应应用。清理前会再次验证路径和文件身份。可从废纸篓恢复。",
+                    arguments: [String(plan.items.count), String(plan.rejected.count)]
+                )
+                let listing = NSTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 180))
+                listing.isEditable = false
+                listing.font = .systemFont(ofSize: 11)
+                listing.string = (plan.items.map { $0.url.path }
+                    + plan.rejected.map { L10n.text("不可处理：") + $0.url.path }).joined(separator: "\n")
+                let scroll = NSScrollView(frame: listing.frame)
+                scroll.documentView = listing
+                scroll.hasVerticalScroller = true
+                alert.accessoryView = scroll
+                alert.addButton(withTitle: L10n.text("取消"))
+                alert.addButton(withTitle: L10n.text("移入废纸篓"))
+                alert.beginSheetModal(for: target) { response in
+                    guard response == .alertSecondButtonReturn else { return }
+                    DispatchQueue.global(qos: .utility).async {
+                        let results = plan.execute()
+                        DispatchQueue.main.async {
+                            self.scan()
+                            let resultAlert = NSAlert()
+                            resultAlert.messageText = L10n.text("缓存清理结果")
+                            resultAlert.informativeText = FileOperationPlan.summary(results)
+                            resultAlert.addButton(withTitle: L10n.text("好"))
+                            resultAlert.beginSheetModal(for: target) { _ in }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

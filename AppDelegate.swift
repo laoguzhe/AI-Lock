@@ -104,13 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             .split(separator: ",")
             .map(String.init)
         var active = statusAlerts.evaluate(sample)
-        if Date() < alertPreviewUntil { active.formUnion(ResourceAlerts.Metric.allCases) }
+        if Date() < alertPreviewUntil { active.formUnion(ResourceAlerts.Metric.allCases.filter { $0 != .swap }) }
         let networkSelected = selected.contains("network") || selected.contains("networkUpload") || selected.contains("networkDownload")
         let selectableMetrics: Set<ResourceAlerts.Metric> = [.cpu, .memory, .disk, .network]
         let visibleMetrics = ResourceAlerts.Metric.allCases.filter {
-            selected.contains($0.rawValue)
+            $0 != .swap && (selected.contains($0.rawValue)
                 || ($0 == .network && networkSelected)
-                || (!selectableMetrics.contains($0) && active.contains($0))
+                || (!selectableMetrics.contains($0) && active.contains($0)))
         }
         let visibleAlerts = active.intersection(Set(visibleMetrics))
         if visibleAlerts.isEmpty {
@@ -351,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
             DashboardWindow.hideFunctionalWindows()
             overviewPopover.behavior = .transient
             overviewPopover.animates = true
-            let overview = DashboardOverviewView()
+            let overview = LumenOverviewView()
             let hostingController = NSHostingController(rootView: AnyView(overview))
             hostingController.view.appearance = DashboardWindow.preferredAppearance
             overviewPopover.contentViewController = hostingController
@@ -364,9 +364,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
                 hostingController.rootView = AnyView(ScrollView(.vertical) {
                     overview
                 }
-                .frame(width: 390, height: contentHeight))
+                .frame(width: 392, height: contentHeight))
             }
-            overviewPopover.contentSize = NSSize(width: 390, height: contentHeight)
+            overviewPopover.contentSize = NSSize(width: 392, height: contentHeight)
             overviewPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             startOverviewClickMonitoring()
             DispatchQueue.main.async { [weak self] in

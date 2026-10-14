@@ -17,6 +17,13 @@ struct ExtensionSettingsView: View {
         let _ = localizationEnglish
         let _ = localizationFollowsSystem
         VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(L10n.text("系统扩展")).font(.headline)
+                Pill("待上线", tone: .caution, symbol: "clock")
+                Spacer(minLength: 0)
+            }
+            Text(L10n.text("系统扩展所需的 Apple 权限尚未获批，相关能力暂未开放。"))
+                .font(.caption).foregroundStyle(.secondary)
             Text(L10n.text("连接过滤")).font(.headline)
             Text(L10n.text("按精确远端主机或 IP 阻断连接。端点可能是 IP，域名规则不保证覆盖 DNS/CDN 或代理。没有主机和应用规则时允许所有连接。")).font(.caption).foregroundStyle(.secondary)
             Text(L10n.text(extensions.status)).font(.caption)
