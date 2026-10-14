@@ -447,13 +447,23 @@ try FileManager.default.createDirectory(at: startupRoot, withIntermediateDirecto
 try Data("invalid plist".utf8).write(to: startupRoot.appendingPathComponent("broken.plist"))
 let startupPlist: [String: Any] = ["Label": "test.missing", "Program": "/nonexistent/test", "RunAtLoad": true]
 try PropertyListSerialization.data(fromPropertyList: startupPlist, format: .xml, options: 0).write(to: startupRoot.appendingPathComponent("missing.plist"))
-let startup = StartupItemInspector.scan(roots: [(startupRoot, "测试配置")])
-expect(startup.count == 2 && startup.contains { $0.startupStatus.contains("无法解析") }, "startup inspector keeps malformed configuration visible")
+let incompleteStartupPlist: [String: Any] = ["ProgramArguments": [String](), "RunAtLoad": true]
+try PropertyListSerialization.data(fromPropertyList: incompleteStartupPlist, format: .xml, options: 0).write(to: startupRoot.appendingPathComponent("incomplete.plist"))
+let startup = StartupItemInspector.scan(roots: [(startupRoot, "当前用户 LaunchAgent")])
+expect(startup.count == 3 && startup.contains { $0.startupStatus.contains("无法解析") }, "startup inspector keeps malformed configuration visible")
 expect(startup.contains { $0.startupStatus.contains("程序不存在") } && startup.allSatisfy { $0.startupStatus.contains("运行状态未知") }, "startup configuration diagnostics do not claim verified running status")
+let incompleteStartup = startup.first { $0.url.lastPathComponent == "incomplete.plist" }!
+expect(incompleteStartup.startupStatus.contains("缺少有效 Label") && incompleteStartup.startupStatus.contains("缺少执行程序") && incompleteStartup.repairData != nil,
+       "incomplete current-user startup entries are enabled for backed-up cleanup")
+let repairBackups = root.appendingPathComponent("startup-backups")
+let incompleteBackup = try StartupItemRepair.quarantine(incompleteStartup, backupRoot: repairBackups, userLaunchRoot: startupRoot)
+let incompleteBackupBytes = try Data(contentsOf: incompleteBackup)
+let expectedIncompleteBackup = try PropertyListSerialization.data(fromPropertyList: incompleteStartupPlist, format: .xml, options: 0)
+expect(incompleteBackupBytes == expectedIncompleteBackup, "one-click cleanup backs up an incomplete startup entry")
+expect(!FileManager.default.fileExists(atPath: incompleteStartup.url.path), "one-click cleanup removes the incomplete entry only after backup")
 
 var repairItem = startup.first { $0.url.lastPathComponent == "broken.plist" }!
 repairItem.repairData = try Data(contentsOf: repairItem.url)
-let repairBackups = root.appendingPathComponent("startup-backups")
 let saved = try StartupItemRepair.quarantine(repairItem, backupRoot: repairBackups, userLaunchRoot: startupRoot)
 let backupBytes = try Data(contentsOf: saved)
 expect(backupBytes == repairItem.repairData!, "startup repair preserves exact configuration backup")
@@ -474,6 +484,7 @@ do {
 
 let recoveredProgram = root.appendingPathComponent("recovered-program")
 try Data("restored".utf8).write(to: recoveredProgram)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: recoveredProgram.path)
 let recoveredConfig = startupRoot.appendingPathComponent("recovered.plist")
 let recoveredBytes = try PropertyListSerialization.data(fromPropertyList: ["Label": "test.recovered", "Program": recoveredProgram.path], format: .xml, options: 0)
 try recoveredBytes.write(to: recoveredConfig)

@@ -111,7 +111,10 @@ final class NetworkDiagnosticsTests: XCTestCase {
         XCTAssertEqual(plans.map(\.kind), [.local, .speed, .regional, .dns, .route, .ping, .port, .ipv6, .nodes])
         XCTAssertTrue(plans.allSatisfy { $0.target == "example.com" && $0.port == 8443 && $0.interfaces == ["en0", "en1"] })
         XCTAssertEqual(plans.first { $0.kind == .dns }?.dnsServers.last, "9.9.9.9")
-        XCTAssertEqual(plans.reduce(0) { $0 + $1.expectedResultCount }, 107)
+        let expectedCount = 1 + 2 * (1 + plans.first { $0.kind == .regional }!.latencyRegions.count
+            + plans.first { $0.kind == .dns }!.dnsServers.count + 4
+            + plans.first { $0.kind == .nodes }!.nodes.count)
+        XCTAssertEqual(plans.reduce(0) { $0 + $1.expectedResultCount }, expectedCount)
     }
     func testComprehensivePlanDoesNotDuplicateResolver() {
         let plans = NetworkDiagnosticPlan.comprehensive(interfaces: [""], target: "example.com", port: 443, resolver: "1.1.1.1", nodes: NetworkDiagnosticNode.defaults)
@@ -195,5 +198,10 @@ final class NetworkDiagnosticsTests: XCTestCase {
     }
     func testRouteOutputParsing() {
         XCTAssertEqual(NetworkDiagnosticService.field("gateway", in: " route to: default\n gateway: 192.168.1.1\n interface: en0\n"), "192.168.1.1")
+    }
+    func testSpeedFallbackPrioritizesVerifiedUploadNodes() {
+        let remote = NetworkDiagnosticNode(id: "github-CN-1", name: "远程节点", region: "中国", download: "http://example.com/down", upload: "http://example.com/upload")
+        let selected = [remote, NetworkDiagnosticNode.defaults.first { $0.id == "cloudflare" }!, NetworkDiagnosticNode.defaults.first { $0.id == "shanghai-telecom" }!]
+        XCTAssertEqual(NetworkDiagnosticService.prioritizedUploadNodes(selected).map(\.id), ["shanghai-telecom", "cloudflare", "github-CN-1"])
     }
 }

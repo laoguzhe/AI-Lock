@@ -12,6 +12,7 @@
 		"AA20261011A1000000000001" = { "isa" = "PBXFileReference"; "path" = "Resources/NetworkDiagnostics"; "lastKnownFileType" = "folder"; "sourceTree" = "<group>"; };
 		"AA20261011A1000000000002" = { "isa" = "PBXBuildFile"; "fileRef" = "AA20261011A1000000000001"; };
 		"AA20261011A1000000000003" = { "isa" = "PBXResourcesBuildPhase"; "buildActionMask" = "2147483647"; "files" = ("AA20261011A1000000000002", "AA20261014B1000000000004",); "runOnlyForDeploymentPostprocessing" = "0"; };
+		"AA20261014B1000000000005" = { "isa" = "PBXShellScriptBuildPhase"; "buildActionMask" = "2147483647"; "files" = (); "inputFileListPaths" = (); "inputPaths" = ("$(SRCROOT)/icon.png",); "name" = "Copy Menu Bar Status Icon"; "outputFileListPaths" = (); "outputPaths" = ("$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/StatusIcon.png",); "runOnlyForDeploymentPostprocessing" = "0"; "shellPath" = "/bin/sh"; "shellScript" = "set -e\ncp \"$SRCROOT/icon.png\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/StatusIcon.png\"\n"; };
 		"AA20261011A1000000000004" = { "isa" = "PBXFileReference"; "path" = "ScreenRecorder.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"AA20261011A1000000000005" = { "isa" = "PBXBuildFile"; "fileRef" = "AA20261011A1000000000004"; };
 		"AA20261011A1000000000006" = { "isa" = "PBXFileReference"; "path" = "DisplayBrightness.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
@@ -338,6 +339,7 @@
 				"AA20261011A1000000000003",
 				"B51499C455FB47739D3A1AB4",
 				"6BACFAA9818C36FD87FB741C",
+				"AA20261014B1000000000005",
 			);
 			"dependencies" = (
 			);

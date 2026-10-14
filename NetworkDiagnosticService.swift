@@ -100,18 +100,103 @@ struct NetworkDiagnosticInterface: Identifiable, Sendable {
     var id: String { name + ":" + address }
 }
 
-struct NetworkDiagnosticNode: Identifiable, Sendable {
+struct NetworkDiagnosticNode: Identifiable, Codable, Sendable {
     let id: String
     let name: String
     let region: String
     let download: String
     let upload: String?
-    static let defaults: [Self] = [
+    var city: String? = nil
+    var carrier: String? = nil
+
+    var localizedName: String {
+        guard let city, let carrier else { return L10n.text(name) }
+        let serverID = id.split(separator: "-").last.map(String.init) ?? id
+        return "\(L10n.text(carrier)) · \(city) (#\(serverID))"
+    }
+
+    static let catalogKey = "networkDiagnostic.remoteNodeCatalog"
+    static let catalogRevisionKey = "networkDiagnostic.remoteNodeCatalogRevision"
+    static let builtIn: [Self] = [
         .init(id: "tuna", name: "清华镜像", region: "国内", download: "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz", upload: nil),
         .init(id: "aliyun", name: "阿里云镜像", region: "国内", download: "https://mirrors.aliyun.com/ubuntu/ls-lR.gz", upload: nil),
+        .init(id: "shanghai-telecom", name: "上海电信", region: "中国大陆 · 中国电信上海", download: "http://speedtest1.online.sh.cn:8080/speedtest/random1000x1000.jpg", upload: "http://speedtest1.online.sh.cn:8080/speedtest/upload.php"),
         .init(id: "cloudflare", name: "Cloudflare", region: "海外服务（自动选点）", download: "https://speed.cloudflare.com/__down?bytes=4194304", upload: "https://speed.cloudflare.com/__up"),
         .init(id: "ovh", name: "OVH 法国", region: "国外", download: "https://proof.ovh.net/files/10Mb.dat", upload: nil)
     ]
+
+    static var remote: [Self] {
+        guard let data = UserDefaults.standard.data(forKey: catalogKey),
+              let nodes = try? JSONDecoder().decode([Self].self, from: data) else { return [] }
+        return nodes
+    }
+
+    static var defaults: [Self] {
+        let remoteNodes = remote
+        return remoteNodes.isEmpty ? builtIn : remoteNodes + builtIn
+    }
+
+    static func refreshFromGitHub() async {
+        let sources: [(String, String)] = [
+            ("中国电信", "https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main/CN_Telecom.csv"),
+            ("中国联通", "https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main/CN_Unicom.csv"),
+            ("中国移动", "https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main/CN_Mobile.csv")
+        ]
+
+        do {
+            let downloads = try await withThrowingTaskGroup(of: (String, Data).self) { group in
+                for (carrier, address) in sources {
+                    group.addTask {
+                        guard let url = URL(string: address) else { throw URLError(.badURL) }
+                        var request = URLRequest(url: url, timeoutInterval: 10)
+                        request.setValue("AILock Network Diagnostics", forHTTPHeaderField: "User-Agent")
+                        let (data, response) = try await URLSession.shared.data(for: request)
+                        guard let response = response as? HTTPURLResponse,
+                              (200..<300).contains(response.statusCode),
+                              !data.isEmpty, data.count <= 64 * 1024 else { throw URLError(.badServerResponse) }
+                        return (carrier, data)
+                    }
+                }
+                var results = [(String, Data)]()
+                for try await result in group { results.append(result) }
+                return results
+            }
+
+            let catalogs = sources.compactMap { carrier, _ in
+                downloads.first(where: { $0.0 == carrier }).map { parseCSV(String(decoding: $0.1, as: UTF8.self), carrier: carrier) }
+            }
+            let updated = (0..<(catalogs.map(\.count).max() ?? 0)).flatMap { index in
+                catalogs.compactMap { index < $0.count ? $0[index] : nil }
+            }
+            guard !updated.isEmpty else { return }
+            let data = try JSONEncoder().encode(updated)
+            UserDefaults.standard.set(data, forKey: catalogKey)
+            UserDefaults.standard.set(UserDefaults.standard.integer(forKey: catalogRevisionKey) + 1, forKey: catalogRevisionKey)
+        } catch {
+            // Keep the last successful catalog and built-in nodes when GitHub is unavailable.
+        }
+    }
+
+    private static func parseCSV(_ text: String, carrier: String) -> [Self] {
+        var nodes = [Self]()
+        for line in text.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: ",", omittingEmptySubsequences: false).map { String($0) }
+            guard fields.count >= 8 else { continue }
+            guard fields[1] == "CN",
+                  let port = Int(fields[6]), (1...65535).contains(port),
+                  !fields[0].isEmpty, fields[0].allSatisfy({ $0.isNumber }),
+                  fields[5].range(of: #"^[A-Za-z0-9.-]+$"#, options: .regularExpression) != nil else { continue }
+            let serverID = fields[0]
+            let host = fields[5]
+            let city = fields[3].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !city.isEmpty else { continue }
+            let root = "http://\(host):\(port)/speedtest"
+            nodes.append(.init(id: "github-\(carrier)-\(serverID)", name: carrier, region: carrier,
+                               download: root + "/random1000x1000.jpg", upload: root + "/upload.php",
+                               city: city, carrier: carrier))
+        }
+        return nodes
+    }
 }
 
 enum NetworkDiagnosticKind: String, CaseIterable, Identifiable, Sendable {
@@ -405,9 +490,9 @@ enum NetworkDiagnosticService {
                 do {
                     let result: NetworkDiagnosticResult
                     switch plan.kind {
-                    case .speed: result = try await speed(interface, liveSpeed: liveSpeed)
+                    case .speed: result = try await speed(interface, nodes: plan.nodes, liveSpeed: liveSpeed)
                     case .route:
-                        var args = ["-n", "-m", "16", "-q", "1", "-w", "1"]
+                        var args = ["-n", "-I", "-m", "16", "-q", "1", "-w", "1"]
                         if !interface.isEmpty { args += ["-i", interface] }
                         args.append(plan.target)
                         let r = try NetworkDiagnosticCommand.run("/usr/sbin/traceroute", args, timeout: 25)
@@ -464,7 +549,7 @@ enum NetworkDiagnosticService {
             .init(name: "首字节耗时", value: String(format: "%.1f ms", seconds("time_starttransfer") * 1000)),
             .init(name: "连接 IP", value: json["remote_ip"] as? String ?? "—")
         ]
-        var details = node.region + "\n" + node.download + "\n" + download.output
+        var details = L10n.text(node.region) + "\n" + node.download + "\n" + download.output
         metrics.append(.init(name: "下载样本", value: String(format: "%.2f MiB", bytes.doubleValue / 1048576)))
         var summary = "下载样本含连接开销；VPN 或透明代理可能影响连接 IP 和性能"
         var passed = true
@@ -480,7 +565,7 @@ enum NetworkDiagnosticService {
         } else { metrics.append(.init(name: "上传速度", value: "该节点不支持上传")) }
         return .init(node.name, line: interface.isEmpty ? "系统默认线路" : interface, passed: passed, summary: summary, metrics: metrics, details: details)
     }
-    private static func speed(_ interface: String, liveSpeed: @Sendable (NetworkDiagnosticSpeedSample) async -> Void) async throws -> NetworkDiagnosticResult {
+    private static func speed(_ interface: String, nodes: [NetworkDiagnosticNode], liveSpeed: @Sendable (NetworkDiagnosticSpeedSample) async -> Void) async throws -> NetworkDiagnosticResult {
         let line = interface.isEmpty ? "系统默认线路" : interface
         await liveSpeed(.init(line: line, downloadMbps: nil, uploadMbps: nil))
         let jsonURL = FileManager.default.temporaryDirectory.appendingPathComponent("ailock-speed-" + UUID().uuidString + ".json")
@@ -498,34 +583,84 @@ enum NetworkDiagnosticService {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return try fallbackSpeed(interface, cause: error.localizedDescription)
+            return try fallbackSpeed(interface, nodes: nodes, cause: error.localizedDescription)
         }
         let jsonText = (try? String(contentsOf: jsonURL, encoding: .utf8)) ?? ""
         guard r.status == 0, let json = parseTransfer(jsonText), let download = json["dl_throughput"] as? NSNumber, let upload = json["ul_throughput"] as? NSNumber, download.doubleValue > 0, upload.doubleValue > 0 else {
-            return try fallbackSpeed(interface, cause: r.output + "\n" + jsonText)
+            return try fallbackSpeed(interface, nodes: nodes, cause: r.output + "\n" + jsonText)
         }
         var metrics = [NetworkDiagnosticMetric(name: "下载速度", value: String(format: "%.1f Mbps", download.doubleValue / 1e6)), .init(name: "上传速度", value: String(format: "%.1f Mbps", upload.doubleValue / 1e6))]
         if let latency = json["base_rtt"] as? NSNumber { metrics.append(.init(name: "空闲延迟", value: String(format: "%.1f ms", latency.doubleValue))) }
         if let rpm = json["responsiveness"] as? NSNumber { metrics.append(.init(name: "负载响应能力", value: String(format: "%.0f RPM", rpm.doubleValue))) }
         return .init("Apple 网络质量", line: line, metrics: metrics, details: jsonText + "\n" + r.output)
     }
-    private static func fallbackSpeed(_ interface: String, cause: String) throws -> NetworkDiagnosticResult {
-        guard let node = NetworkDiagnosticNode.defaults.first(where: { $0.id == "cloudflare" }) else {
-            return .init("上传下载测速", line: interface.isEmpty ? "系统默认线路" : interface, passed: false,
-                         summary: "Apple 网络质量测速未成功，且没有可用的备用测速节点", details: cause)
+    static func prioritizedUploadNodes(_ nodes: [NetworkDiagnosticNode]) -> [NetworkDiagnosticNode] {
+        let uploadNodes = nodes.filter { $0.upload != nil }
+        let preferredIDs = ["shanghai-telecom", "cloudflare"]
+        let preferred = preferredIDs.compactMap { id in uploadNodes.first { $0.id == id } }
+        return preferred + uploadNodes.filter { !preferredIDs.contains($0.id) }
+    }
+    private static func fallbackSpeed(_ interface: String, nodes: [NetworkDiagnosticNode], cause: String) throws -> NetworkDiagnosticResult {
+        let line = interface.isEmpty ? "系统默认线路" : interface
+        let selected = nodes.isEmpty ? NetworkDiagnosticNode.defaults : nodes
+        let uploadNodes = Array(prioritizedUploadNodes(selected).prefix(3))
+        let downloadNodes = Array(selected.filter { $0.upload == nil }.prefix(2))
+        var failures = ["Apple networkQuality：\n" + cause]
+        var partial: (node: NetworkDiagnosticNode, result: NetworkDiagnosticResult)?
+
+        for node in uploadNodes {
+            try Task.checkCancellation()
+            do {
+                let result = try nodeTest(node, interface: interface)
+                let hasDownload = result.metrics.contains { $0.name == "下载速度" && NetworkDiagnosticPlots.number($0.value) != nil }
+                let hasUpload = result.metrics.contains { $0.name == "上传速度" && NetworkDiagnosticPlots.number($0.value) != nil }
+                if hasDownload && hasUpload {
+                    return .init("上传下载测速", line: result.line, passed: result.passed,
+                                 summary: "Apple 网络质量测速未成功，备用节点测速已完成。",
+                                 metrics: result.metrics,
+                                 details: failures.joined(separator: "\n\n") + "\n\n" + L10n.text("备用测速") + " (" + node.localizedName + "):\n" + result.details)
+                }
+                if hasDownload && partial == nil { partial = (node, result) }
+                failures.append("\(node.name)：\n" + result.summary + "\n" + result.details)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append("\(node.name)：" + error.localizedDescription)
+            }
         }
-        do {
-            let result = try nodeTest(node, interface: interface)
-            return .init("上传下载测速 · " + node.name, line: result.line, passed: result.passed,
-                         summary: "Apple 网络质量测速未成功，已改用 Cloudflare 小样本测试；" + result.summary,
-                         metrics: result.metrics, details: "Apple networkQuality：\n" + cause + "\n\n备用测速：\n" + result.details)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            return .init("上传下载测速", line: interface.isEmpty ? "系统默认线路" : interface, passed: false,
-                         summary: "Apple 网络质量测速和 Cloudflare 备用测速均未成功",
-                         details: "Apple networkQuality：\n" + cause + "\n\nCloudflare：\n" + error.localizedDescription)
+
+        if let partial {
+            let uploadUnavailable = partial.result.metrics.first { $0.name == "上传速度" }?.value == "该节点不支持上传"
+            let summary = uploadUnavailable
+                ? "下载已成功，但没有可用的上传节点。请查看详情，或在诊断参数中配置 POST 上传地址。"
+                : "下载已成功，但所选节点的上传请求未成功。请查看详情中的 HTTP 状态和节点地址。"
+            return .init("上传下载测速", line: partial.result.line, passed: false, summary: summary,
+                         metrics: partial.result.metrics,
+                         details: failures.joined(separator: "\n\n") + "\n\n备用测速：\n" + partial.result.details)
         }
+
+        for node in downloadNodes {
+            try Task.checkCancellation()
+            do {
+                let result = try nodeTest(node, interface: interface)
+                let hasDownload = result.metrics.contains { $0.name == "下载速度" && NetworkDiagnosticPlots.number($0.value) != nil }
+                failures.append("\(node.name)：\n" + result.summary + "\n" + result.details)
+                if hasDownload {
+                    return .init("上传下载测速", line: result.line, passed: false,
+                                 summary: "下载已成功，但没有可用的上传节点。请查看详情，或在诊断参数中配置 POST 上传地址。",
+                                 metrics: result.metrics,
+                                 details: failures.joined(separator: "\n\n"))
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append("\(node.name)：" + error.localizedDescription)
+            }
+        }
+
+        return .init("上传下载测速", line: line, passed: false,
+                     summary: "网络质量测速和备用节点均未能获取速度，请检查网络或测速节点。",
+                     details: failures.joined(separator: "\n\n"))
     }
     static func subnetFindings(_ entries: [NetworkDiagnosticInterface], gateway: String?, routeInterface: String?) -> [String] {
         let v4 = entries.filter { !$0.ipv6 }

@@ -126,6 +126,7 @@ struct NetworkDiagnosticsView: View {
     @AppStorage("appearance.mode") private var appearanceMode = "system"
     @AppStorage("overview.language") private var english = false
     @AppStorage("overview.followSystemLanguage") private var followsSystem = true
+    @AppStorage(NetworkDiagnosticNode.catalogRevisionKey) private var nodeCatalogRevision = 0
     @State private var interface = ""
     @State private var allInterfaces = false
     @State private var target = "www.haidatas.com"
@@ -150,6 +151,7 @@ struct NetworkDiagnosticsView: View {
     var body: some View {
         let _ = english
         let _ = followsSystem
+        let _ = nodeCatalogRevision
         GeometryReader { geometry in
             let contentHeight = max(300, geometry.size.height - (validation.isEmpty ? 148 : 176))
             let miniHeight = (contentHeight - 120) / 2
@@ -181,6 +183,7 @@ struct NetworkDiagnosticsView: View {
         .foregroundStyle(DiagnosticConsole.text).background(DiagnosticConsole.background)
         .preferredColorScheme(selectedColorScheme).tint(DiagnosticConsole.cyan)
         .onDisappear { model.cancel() }
+        .onChange(of: nodeCatalogRevision) { _, _ in selectedNodes.formUnion(NetworkDiagnosticNode.remote.map(\.id)) }
         .sheet(isPresented: $showingSettings) { settingsSheet }
         .sheet(item: $detailResult) { result in
             DiagnosticDetailsSheet(model: model, initial: result).preferredColorScheme(selectedColorScheme)
@@ -249,6 +252,18 @@ struct NetworkDiagnosticsView: View {
             HStack {
                 readout("空闲延迟", value: result.flatMap { metricText("空闲延迟", $0) } ?? "—")
                 readout("负载响应能力", value: result.flatMap { metricText("负载响应能力", $0) } ?? "—")
+            }
+            if let result {
+                Text(L10n.text(result.summary))
+                    .font(.system(size: 9))
+                    .foregroundStyle(result.passed ? DiagnosticConsole.muted : DiagnosticConsole.amber)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if model.running && model.activeKind == .speed {
+                Text(L10n.text("正在测试上传和下载速度…"))
+                    .font(.system(size: 9))
+                    .foregroundStyle(DiagnosticConsole.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -402,9 +417,9 @@ struct NetworkDiagnosticsView: View {
             }
             HStack { field("端口", text: $port); field("自定义 DNS 服务器 IP（可选）", text: $resolver) }
             Text(L10n.text("多节点测速")).font(.caption.weight(.semibold))
-            HStack {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(NetworkDiagnosticNode.defaults) { node in
-                    Toggle(L10n.text(node.name), isOn: Binding(get: { selectedNodes.contains(node.id) }, set: { if $0 { selectedNodes.insert(node.id) } else { selectedNodes.remove(node.id) } })).toggleStyle(.checkbox)
+                    Toggle(node.localizedName, isOn: Binding(get: { selectedNodes.contains(node.id) }, set: { if $0 { selectedNodes.insert(node.id) } else { selectedNodes.remove(node.id) } })).toggleStyle(.checkbox)
                 }
             }.font(.system(size: 11))
             field("自定义下载地址（可选，HTTP/HTTPS）", text: $customDownload)

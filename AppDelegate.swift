@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
     private var alertPreviewUntil = Date.distantPast
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        Task { await NetworkDiagnosticNode.refreshFromGitHub() }
         DashboardWindow.setDockLockController(lock)
         DashboardWindow.onWillShowFunctionalWindow = { [weak self] in
             self?.overviewPopover.close()

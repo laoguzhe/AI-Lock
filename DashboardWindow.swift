@@ -85,6 +85,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     private var moduleRoot: NSView?
+    private var moduleHostingViews: [Module: NSHostingView<LumenModuleContent>] = [:]
 
     init(module: Module? = nil, window suppliedWindow: NSWindow? = nil, registerServices: Bool = true, clipboardHistory suppliedClipboardHistory: ClipboardHistory? = nil) {
         injectedClipboardHistory = suppliedClipboardHistory
@@ -93,7 +94,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = L10n.text(module == .logs ? L10n.text("AI Lock 应用日志") : (module?.rawValue ?? "AI Lock"))
-        window.minSize = module.map { LumenWindowMetrics.minimumSize(for: $0) } ?? NSSize(width: 880, height: 520)
+        window.minSize = module.map { LumenWindowMetrics.minimumSize(for: $0) } ?? NSSize(width: 960, height: 620)
         window.backgroundColor = canvas
         window.appearance = Self.preferredAppearance
         super.init(window: window)
@@ -169,35 +170,54 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         guard let window else { return }
         // 统一由 LumenModuleContent 渲染：左侧导航 + 右侧数据面。
         // 侧栏切换模块时走 open(_:)，保持「一个模块一个窗口、切换时挂起采样」的既有行为。
-        let root = LumenModuleContent(module: module, clipboardHistory: clipboardHistory) { [weak self] next in
-            guard next != self?.module else { return }
-            _ = Self.open(next)
-        }
-        let hosting = NSHostingView(rootView: root)
-        // The shared shell owns window geometry; page ideal sizes must not resize it.
-        hosting.sizingOptions = []
-        hosting.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView(frame: NSRect(origin: .zero, size: window.contentView?.bounds.size ?? window.frame.size))
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(hosting)
         window.contentView = container
+        moduleRoot = container
+        activeModuleWindow = window
+        installModuleContent(module, in: container)
+        window.center()
+    }
+
+    private func installModuleContent(_ module: Module, in container: NSView) {
+        let hosting = moduleHostingViews[module] ?? {
+            let root = LumenModuleContent(module: module, clipboardHistory: clipboardHistory) { [weak self] next in
+                guard next != self?.module else { return }
+                _ = Self.open(next)
+            }
+            let hosting = NSHostingView(rootView: root)
+            // The shared shell owns window geometry; page ideal sizes must not resize it.
+            hosting.sizingOptions = []
+            moduleHostingViews[module] = hosting
+            return hosting
+        }()
+        container.subviews.forEach { $0.removeFromSuperview() }
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(hosting)
         NSLayoutConstraint.activate([
             hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             hosting.topAnchor.constraint(equalTo: container.topAnchor),
             hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-        moduleRoot = container
-        activeModuleWindow = window
-        window.center()
+    }
+
+    private func switchModule(to next: Module) {
+        guard next != module, let window, let moduleRoot else { return }
+        suspendPageSampling()
+        module = next
+        window.title = L10n.text(next == .logs ? "AI Lock 应用日志" : next.rawValue)
+        window.backgroundColor = next == .networkDiagnostics ? DiagnosticConsole.backgroundColor : canvas
+        installModuleContent(next, in: moduleRoot)
+        if next == .clipboard { clipboardHistory.start() }
     }
 
     static func open(_ module: Module) -> DashboardWindow {
-        let controller: DashboardWindow
-        if let existing = moduleWindows[module] {
-            controller = existing
-        } else {
-            controller = DashboardWindow(module: module)
+        let controller = moduleWindows.values.first ?? DashboardWindow(module: module)
+        if controller.module != module {
+            controller.switchModule(to: module)
+            moduleWindows = [module: controller]
+        } else if moduleWindows[module] == nil {
             moduleWindows[module] = controller
         }
         presentFunctionalWindow(controller)
@@ -3857,7 +3877,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.alphaValue = 0.8
+        panel.alphaValue = 0.95
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

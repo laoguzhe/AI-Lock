@@ -218,8 +218,14 @@ enum StartupItemRepair {
         }
         if let plist = (try? PropertyListSerialization.propertyList(from: expected, format: nil)) as? [String: Any] {
             let program = plist["Program"] as? String ?? (plist["ProgramArguments"] as? [String])?.first ?? ""
-            guard program.hasPrefix("/"), !fm.fileExists(atPath: program) else {
-                throw NSError(domain: "StartupItemRepair", code: 3, userInfo: [NSLocalizedDescriptionKey: "执行程序已恢复或异常原因不支持自动处理，请重新扫描。"])
+            let executable = program.hasPrefix("/") ? program : ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                .map { $0 + "/" + program }.first { fm.isExecutableFile(atPath: $0) } ?? program
+            let hasInvalidLabel = (plist["Label"] as? String)?.isEmpty != false
+            let hasInvalidExecutable = program.isEmpty
+                || !fm.fileExists(atPath: executable)
+                || !fm.isExecutableFile(atPath: executable)
+            guard hasInvalidLabel || hasInvalidExecutable else {
+                throw NSError(domain: "StartupItemRepair", code: 3, userInfo: [NSLocalizedDescriptionKey: "启动配置已恢复正常，请重新扫描。"])
             }
         }
         let root = backupRoot ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -401,9 +407,13 @@ enum StartupItemInspector {
                 let status = ([trigger] + problems + ["运行状态未知"]).joined(separator: " · ")
                 var item = StartupItem(url: file, label: label, program: executable.isEmpty ? "未知" : executable, kind: kind, startupStatus: status)
                 if problems.isEmpty { item.repairAdvice = "未发现配置异常，无需修复。运行状态尚未验证。" }
-                else if !program.isEmpty && program.hasPrefix("/") && !FileManager.default.fileExists(atPath: executable) {
-                    item.repairAdvice = "执行程序不存在。建议先重新安装所属应用；确认不再使用时，可备份后移走配置。"
-                    if root.standardizedFileURL == home.appendingPathComponent("Library/LaunchAgents").standardizedFileURL { item.repairData = data }
+                else {
+                    item.repairAdvice = "配置存在异常。确认不再需要时，可一键备份后移走；系统配置请通过所属应用或管理员处理。"
+                    // 自动清理仅支持当前用户的 LaunchAgent；系统级项目仍需人工处理。
+                    if root.standardizedFileURL == home.appendingPathComponent("Library/LaunchAgents").standardizedFileURL
+                        || kind == "当前用户 LaunchAgent" {
+                        item.repairData = data
+                    }
                 }
                 result.append(item)
             }
