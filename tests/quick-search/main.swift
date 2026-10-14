@@ -20,6 +20,19 @@ search.search(term) { results in
 let deadline = Date().addingTimeInterval(15)
 while !found && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
 precondition(found, "Unindexed folders must be found through directory enumeration")
+let hiddenFolder = root.appendingPathComponent(".hidden-" + UUID().uuidString)
+try FileManager.default.createDirectory(at: hiddenFolder, withIntermediateDirectories: true)
+let hiddenFile = hiddenFolder.appendingPathComponent(".secret-fixture.txt")
+try Data("hidden".utf8).write(to: hiddenFile)
+for url in [hiddenFolder, hiddenFile] {
+    var matched = false
+    search.search(url.lastPathComponent) { results in matched = results.contains { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == url.resolvingSymlinksInPath() } }
+    let hiddenDeadline = Date().addingTimeInterval(5)
+    while !matched && Date() < hiddenDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    precondition(matched, "Hidden folders and files inside them must be searchable")
+    search.cancel()
+}
+print("PASS: hidden folders and hidden nested files are searchable")
 var cancelled = false
 search.search(term) { _ in precondition(!cancelled, "Cancelled search must not publish stale results") }
 search.cancel()

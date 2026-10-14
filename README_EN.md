@@ -4,7 +4,7 @@
 
 # AI Lock
 
-AI Lock is a free, native Swift/AppKit utility for macOS. It brings together system monitoring, network diagnostics, file and clipboard tools, quick launch, and multi-display utilities. It requires macOS 14 or later. Release builds support both Apple silicon and Intel Macs.
+AI Lock is a free, native Swift/AppKit utility for macOS. It brings together system monitoring, network diagnostics, file and clipboard tools, quick launch, and multi-display utilities. It requires macOS 14 or later. Only Apple Silicon Macs (M-series chips, arm64) are supported.
 
 Local files, app settings, and clipboard history stay on your Mac. Network diagnostics and online lookups connect to the relevant external services when you use them.
 
@@ -27,10 +27,10 @@ The image shows the main feature modules. Live system metrics were cropped out.
 
 - **Resource overview and alerts:** Samples CPU, memory, disk, network, swap, battery, and thermal status. Configure thresholds and notifications. Alerts can continue in the background while the overview window is closed, with a cooldown for repeated alerts of the same type.
 - **Process manager:** Inspect resource use, listening ports, and network rates; search, filter, or quit and force-quit processes. AI Lock rechecks process identity before acting. Batch quit applies only to ordinary apps belonging to the current user.
-- **System health checks:** Run disk and memory performance checks and view device and OS information. Results depend on the current device load, storage, and network conditions.
+- **System health checks:** Run disk and memory performance checks and view device and OS information, fan speeds, and names and usage for internal and external disks. Results depend on the current device load, storage, and network conditions.
 - **Cache cleanup:** Review user caches managed by the app and confirm before cleanup. Quit the related app first when possible.
 - **App uninstaller:** Review third-party apps installed for the user or on the Mac and their identifiable related items. Select items individually to move them to Trash. System apps are excluded.
-- **Startup item inspection:** Review LaunchAgents, LaunchDaemons, and other startup configuration for possible issues. For a user configuration that cannot be parsed or points to a missing executable, inspect it and confirm before backing it up and moving it. Removing a configuration does not necessarily stop a service that is already running.
+- **Startup item inspection:** Review LaunchAgents, LaunchDaemons, and other startup configuration for possible issues. User configurations that cannot be parsed or point to missing executables can be handled individually or backed up and removed with one-click cleanup. Other issues need manual review. Removing a configuration does not necessarily stop a service that is already running.
 - **App logs:** View AI Lock's own macOS Unified Logging records. This is not a system-wide log viewer.
 
 ### Network activity and diagnostics
@@ -43,6 +43,8 @@ Network diagnostics connect to the test endpoints selected by the user. Speed te
 
 ### Files and AI tool activity
 
+The supplemental local index includes hidden files and folders. Floating search uses 80% opacity and separates input from results with a gray line.
+
 - **Unified floating search:** Search local apps, files and folders indexed by Spotlight, and AI Lock actions. Open a result or reveal it in Finder. The app also keeps a bounded local name cache for common folders.
 - **Quick action bar:** Double-press Command to open it. Search apps, files, and actions; navigate with the keyboard and sort by recent use. Enter `> command` to explicitly choose running a command in Terminal. Ordinary search text is never executed automatically.
 - **File activity audit:** Filter and inspect file-access events and export JSON. Endpoint Security reports metadata supplied by macOS: OPEN does not prove file contents were read, and CLOSE.modified does not capture every write call. Full-machine auditing requires Apple's approval for the Endpoint Security entitlement, a signed and activated system extension, and user authorization. **The default release does not include the extension and does not guarantee full-machine auditing.**
@@ -52,17 +54,19 @@ File activity requires the relevant permissions. See the [extension notes](exten
 
 ### Clipboard
 
+If no content appears, click Check Clipboard Access to retry and allow access when macOS asks.
+
 - **Clipboard history:** Collection starts the first time the module is opened. Pause or resume collection, exclude selected apps, restore multiple copied items, add notes, search, and export or restore an encrypted backup.
 - History is stored in a local SQLite database with per-record AES-GCM encryption and a key managed by Keychain. Retention is configurable from 1 to 30 days, with a maximum of 500 items or 64 MiB. A single copied item is limited to 8 MiB. Clipboard history is not uploaded by default.
 - The app filters some common confidential/transient flags, but cannot identify every password or sensitive item and may not always identify the source app correctly. Set a retention period, exclude apps, or pause collection in Settings.
 
 ### Screen, displays, and menu bar
 
-- **Screen recording:** Choose a display, resolution, and save folder to record screen video and system audio to a MOV file. View the elapsed time and stop a recording. macOS Screen & System Audio Recording permission is required. The shortcut is configurable in Settings.
+- **Screen recording:** A flashing border identifies the selected display. Choose a resolution and save folder to record screen video and system audio to a MOV file. View the elapsed time and stop a recording. macOS Screen & System Audio Recording permission is required. The shortcut is configurable in Settings.
 
   ![Screen recorder settings. The example path is generic; recording requires Screen & System Audio Recording permission.](screenshots/screen-recorder.png)
 
-- **Display brightness:** An optional module that sends a unified brightness value to supported external DDC channels detected on some Apple silicon Macs. It does not read the current brightness. Intel Macs and some HDMI and dock setups are unsupported.
+- **Display controls:** Select one or more external displays, or select all, to adjust brightness and speaker volume. Displays must support and enable DDC/CI; some HDMI and dock setups are unsupported. Unidentified control channels are reported as failures.
 - **DockLock:** On multi-display setups, restrict the pointer from crossing an edge away from the target display and return the pointer to the Dock on that display when idle. Real mouse movement cancels a return in progress. Accessibility permission is required.
 - **Menu bar organizer:** Fold less-used menu bar icons to the left of an arrow and expand them on demand. Configure automatic collapse after expansion.
 - **Screen mask:** Show a black visual mask on selected displays while keeping at least one display visible. Press `⌘⌃⇧Esc` to remove all masks. A mask does not turn off a display or prevent macOS or other apps from reading its contents.
@@ -78,6 +82,8 @@ Most AI Lock data stays on the Mac. Clipboard history and Agent Hooks events are
 - **Endpoint Security / Network Extension:** Needed only for system-wide auditing or filtering. These features also depend on Apple's capability approval, extension signing, and system authorization; ordinary privacy permissions alone cannot enable them.
 
 AI Lock does not represent an unauthorized feature as successfully collecting data. Clipboard history, file activity history, and Agent Hooks data can be deleted from their respective modules. Review each feature's description and choose an appropriate collection scope and retention period.
+
+Save Thresholds is gray until a setting changes, disabled while saving, and disabled again after saving. Switching modules preserves the window position and size.
 
 ## Shortcuts and settings
 

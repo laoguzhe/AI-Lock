@@ -92,6 +92,19 @@ final class ClipboardPageModel: ObservableObject {
         status = "已复制到系统剪贴板"
     }
 
+    func checkClipboardAccess() {
+        if history.pasteboardAccessDenied {
+            status = "剪贴板读取已被系统拒绝，请在系统设置的隐私与安全性中允许 AI Lock 访问剪贴板。"
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") { NSWorkspace.shared.open(url) }
+        } else if history.isPaused {
+            status = "请先继续采集，再读取剪贴板。"
+        } else {
+            let read = history.readCurrentClipboard()
+            refresh()
+            status = read ? "已读取当前剪贴板。" : "未读取到内容：请先复制普通文本，再重试；若系统询问，请允许剪贴板访问。"
+        }
+    }
+
     func remove(_ record: ClipboardRecord) {
         history.remove(record.id)
         refresh()
@@ -264,6 +277,7 @@ final class ClipboardPageModel: ObservableObject {
 // ============================================================================
 
 struct LumenClipboardView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model: ClipboardPageModel
 
     init(history: ClipboardHistory = .shared) {
@@ -275,6 +289,7 @@ struct LumenClipboardView: View {
     ]
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .clipboard,
             subtitle: subtitle,
@@ -284,6 +299,7 @@ struct LumenClipboardView: View {
         )
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refresh() }
         .alert(L10n.text("清空本地剪贴板历史？"), isPresented: $model.showClearConfirm) {
             Button(L10n.text("取消"), role: .cancel) {}
             Button(L10n.text("清空历史"), role: .destructive) { model.clearAll() }
@@ -304,6 +320,8 @@ struct LumenClipboardView: View {
 
     @ViewBuilder
     private var actions: some View {
+        Button(L10n.text("检查剪贴板访问")) { model.checkClipboardAccess() }
+            .lumenButton(.secondary, icon: "lock.doc")
         Button(L10n.text(model.history.isPaused ? "继续采集" : "暂停采集")) {
             model.history.setPaused(!model.history.isPaused)
             model.refresh()
@@ -352,11 +370,15 @@ struct LumenClipboardView: View {
     private var content: some View {
         VStack(spacing: 0) {
             toolbar
+            if model.history.pasteboardAccessDenied {
+                NoticeBar(level: .caution, text: "系统已拒绝剪贴板访问，请点击「检查剪贴板访问」前往设置。")
+                    .padding(.horizontal, Lumen.Metrics.pageInset)
+            }
             if model.records.isEmpty {
                 EmptyState(symbol: "doc.on.clipboard",
                            title: emptyTitle,
                            detail: model.search.isEmpty && model.sourceFilter.isEmpty && model.typeFilter.isEmpty
-                               ? "复制任意内容后，会在这里出现。历史使用本机密钥逐条加密。"
+                               ? "复制内容后会在这里出现。没有内容时，可点击「检查剪贴板访问」重试，并允许系统的剪贴板访问请求。"
                                : "调整搜索或筛选条件。")
                 .frame(maxHeight: .infinity)
             } else {

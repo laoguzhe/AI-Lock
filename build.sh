@@ -1,7 +1,7 @@
 #!/bin/bash
 # 编译 AI Lock 并打包成 .app（辅助功能权限只能授给 .app，不能授给裸二进制）
 #
-#   ./build.sh              开发构建：临时签名，编完即用
+#   ./build.sh              开发构建：稳定开发者签名，编完即用
 #   ./build.sh --release    分发构建：Developer ID 签名 + Hardened Runtime + 安全时间戳
 #                           （这三项缺一样，公证都会直接被拒）
 set -euo pipefail
@@ -27,6 +27,7 @@ run_step() {
 
 BUILD_DIR="${BUILD_DIR:-build}"
 APP="$BUILD_DIR/AILock.app"
+[[ "${AILOCK_ARCHS:-arm64}" == "arm64" ]] || { echo "AI Lock supports Apple Silicon (arm64) only." >&2; exit 2; }
 
 RELEASE=0
 [[ "${1:-}" == "--release" ]] && RELEASE=1
@@ -50,7 +51,7 @@ fi
 run_step "清理旧构建目录" rm -rf "$BUILD_DIR"
 run_step "创建应用目录结构" mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-SOURCES=(LumenDesignSystem.swift LumenShell.swift LumenOverviewView.swift LumenProcessesView.swift LumenNetworkView.swift LumenFileActivityView.swift LumenClipboardView.swift LumenHealthView.swift LumenUninstallerView.swift LumenLogsView.swift LumenScreenViews.swift LumenPreferencesView.swift LumenModuleHost.swift NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AgentHooks.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
+SOURCES=(LumenDesignSystem.swift LumenShell.swift LumenOverviewView.swift LumenProcessesView.swift LumenNetworkView.swift LumenFileActivityView.swift LumenClipboardView.swift LumenUninstallerView.swift LumenLogsView.swift LumenScreenViews.swift LumenPreferencesView.swift LumenModuleHost.swift NetworkDiagnosticService.swift NetworkDiagnosticsView.swift MenuBarOrganizer.swift Localization.swift AppDelegate.swift AgentHooks.swift AppSupport.swift AppSettings.swift MonitoringService.swift CacheCleaner.swift ClipboardHistory.swift ClipboardRepository.swift ClipboardTagView.swift ModuleViewController.swift ClipboardModuleController.swift FilesModuleController.swift ProcessesModuleController.swift NetworkModuleController.swift DashboardWindow.swift AIUsageTracker.swift MediaAccessMonitor.swift ScreenRecorder.swift DisplayBrightness.swift DockController.swift HardwareInfo.swift LogStore.swift MaintenanceTools.swift FileModels.swift FileScanService.swift DirectoryIndex.swift FileActivityService.swift DirectoryActivityMonitor.swift FileOperationPlan.swift ApplicationCatalog.swift NetworkHistory.swift NetworkInspector.swift NetworkObservationService.swift Notifications.swift ProcessMonitor.swift ProcessNetworkMonitor.swift QuickSearch.swift ResourceAlerts.swift SecurityExtensionStatus.swift SystemExtensionController.swift AuditExtensionClient.swift extensions/AuditIPC.swift ExtensionSettingsView.swift ContentFilterConfiguration.swift FilterHealthMonitor.swift NetworkFilterPolicy.swift SignedApplicationResolver.swift extensions/FilterHealthIPC.swift FilterConfigurationTransaction.swift SystemMonitor.swift)
 # Compile a fixed source snapshot when other development tasks edit the workspace.
 SOURCE_SNAPSHOT="$(mktemp -d /tmp/ailock-build-sources.XXXXXX)"
 trap 'rm -rf "$SOURCE_SNAPSHOT"; [[ -z "$CUSTOM_ICON" ]] || rm -f "$CUSTOM_ICON"' EXIT
@@ -61,26 +62,12 @@ for source in "${SOURCES[@]}"; do
     SNAPSHOT_SOURCES+=("$SOURCE_SNAPSHOT/$source")
 done
 log "✓ 已固定本次构建的源码快照（${#SOURCES[@]} 个源文件）"
-# Release artifacts contain both supported architectures; local builds use the host architecture.
-if [[ $RELEASE == 1 ]]; then
-    ARCHS="${AILOCK_ARCHS:-arm64 x86_64}"
-else
-    ARCHS="${AILOCK_ARCHS:-$(uname -m)}"
-fi
-BINARIES=()
-for arch in $ARCHS; do
-    [[ "$arch" == "arm64" || "$arch" == "x86_64" ]] || { echo "Unsupported architecture: $arch" >&2; exit 1; }
-	binary="$BUILD_DIR/AILock-$arch"
-	run_step "编译 $arch 版本" swiftc -O -swift-version 5 -target "$arch-apple-macos14.0" -o "$binary" "${SNAPSHOT_SOURCES[@]}"
-    BINARIES+=("$binary")
-done
-if [[ ${#BINARIES[@]} -gt 1 ]]; then
-	run_step "合并通用二进制（arm64 + x86_64）" lipo -create "${BINARIES[@]}" -output "$APP/Contents/MacOS/AILock"
-else
-	run_step "放置应用主程序" cp "${BINARIES[0]}" "$APP/Contents/MacOS/AILock"
-fi
+# All builds target Apple Silicon; Intel/universal artifacts are no longer produced.
+run_step "编译 Apple Silicon（arm64）版本" swiftc -O -swift-version 5 -target arm64-apple-macos14.0 -o "$APP/Contents/MacOS/AILock" "${SNAPSHOT_SOURCES[@]}"
+[[ "$(lipo -archs "$APP/Contents/MacOS/AILock")" == "arm64" ]] || { echo "Unexpected application architecture" >&2; exit 1; }
 
 run_step "复制网络诊断资源" cp -R Resources/NetworkDiagnostics "$APP/Contents/Resources/NetworkDiagnostics"
+run_step "复制中英文权限说明" cp -R Resources/en.lproj Resources/zh-Hans.lproj "$APP/Contents/Resources/"
 run_step "复制开源许可文件" cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 
 # Use the supplied PNG if present; otherwise generate the default app icon.
@@ -89,7 +76,7 @@ if [[ -n "$CUSTOM_ICON" ]]; then
 	rm -f "$CUSTOM_ICON"
 else
 	log "▶ 编译默认应用图标"
-	swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" -o "$BUILD_DIR/makeicon" makeicon.swift
+	swiftc -swift-version 5 -target arm64-apple-macos14.0 -o "$BUILD_DIR/makeicon" makeicon.swift
 	"$BUILD_DIR/makeicon" "$BUILD_DIR/icon.png" >/dev/null
 fi
 ICONSET="$BUILD_DIR/AILock.iconset"
@@ -116,13 +103,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$BUILD_NUM</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key><string>Copyright © 2026 gu lao. All rights reserved.</string>
-	<key>NSSystemExtensionUsageDescription</key><string>AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。</string>
-	<key>NSAppleEventsUsageDescription</key><string>AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。</string>
+	<key>NSSystemExtensionUsageDescription</key><string>When enabled, AI Lock audits file operations in selected directories and filters connections.</string>
+	<key>NSAppleEventsUsageDescription</key><string>When a startup item cannot be removed due to system permissions, AI Lock asks Finder to move the startup item you confirmed to Trash.</string>
 	<key>LSUIElement</key><true/>
 </dict>
 </plist>

@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Chinese and English localization
+        run: ./tests/localization/run.sh
       - name: Core XCTest
         run: swift test
       - name: Isolated regressions
@@ -25,7 +27,7 @@ jobs:
         run: ./tests/ipc-protocol/run.sh
       - name: Build application
         env:
-          AILOCK_ARCHS: arm64 x86_64
+          AILOCK_ARCHS: arm64
           DEV_SIGN_ID: '-'
         run: ./build.sh
       - name: Compile extension prototypes

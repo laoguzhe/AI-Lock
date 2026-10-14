@@ -8,6 +8,7 @@ import SwiftUI
 // ============================================================================
 
 struct LumenFileActivityView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @ObservedObject private var audit = AuditExtensionClient.shared
     @ObservedObject private var extensions = SystemExtensionController.shared
     @ObservedObject private var aiUsage = AIUsageTracker.shared
@@ -46,6 +47,7 @@ struct LumenFileActivityView: View {
     }
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .files,
             subtitle: subtitle,
@@ -186,7 +188,7 @@ struct LumenFileActivityView: View {
                         Picker("", selection: $scope) {
                             Text(L10n.text("全部程序")).tag("全部程序")
                             Text(L10n.text("AI 工具（推测）")).tag("AI 工具（推测）")
-                        }
+                        }.id(localizationState.revision)
                     }
                     filterField("应用") {
                         Picker("", selection: $application) {
@@ -194,21 +196,21 @@ struct LumenFileActivityView: View {
                             ForEach(Array(Set(audit.events.map(\.executable))).sorted(), id: \.self) { path in
                                 Text(URL(fileURLWithPath: path).lastPathComponent).tag(path)
                             }
-                        }
+                        }.id(localizationState.revision)
                     }
                     filterField("操作") {
                         Picker("", selection: $operation) {
                             ForEach(["全部操作", "打开 / 可能读取", "创建", "修改", "删除", "移动"], id: \.self) {
                                 Text(L10n.text($0)).tag($0)
                             }
-                        }
+                        }.id(localizationState.revision)
                     }
                     filterField("时间") {
                         Picker("", selection: $period) {
                             ForEach(["最近 1 小时", "最近 24 小时", "全部历史"], id: \.self) {
                                 Text(L10n.text($0)).tag($0)
                             }
-                        }
+                        }.id(localizationState.revision)
                     }
                 }
 

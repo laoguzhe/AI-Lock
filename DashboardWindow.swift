@@ -46,6 +46,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     private static weak var lockController: DockLock?
     private static var moduleWindows: [Module: DashboardWindow] = [:]
     private static var preferencesWindow: PreferencesWindowController?
+    private static var functionalFrame: NSRect?
     static var onWillShowFunctionalWindow: (() -> Void)?
 
     /// Keep controllers alive so switching surfaces preserves each page's state.
@@ -63,6 +64,12 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
 
     private static func presentFunctionalWindow(_ controller: NSWindowController) {
+        if controller is DashboardWindow || controller is PreferencesWindowController {
+            let visible = moduleWindows.values.compactMap(\.window).first { $0.isVisible && $0 !== controller.window }
+                ?? preferencesWindow?.window.flatMap { $0.isVisible && $0 !== controller.window ? $0 : nil }
+            if let visible { functionalFrame = visible.frame }
+            if let frame = functionalFrame { controller.window?.setFrame(frame, display: true) }
+        }
         controller.window?.appearance = preferredAppearance
         onWillShowFunctionalWindow?()
         hideFunctionalWindows(except: controller.window)
@@ -71,6 +78,9 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         }
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        if controller is DashboardWindow || controller is PreferencesWindowController {
+            functionalFrame = controller.window?.frame
+        }
         (controller as? DashboardWindow)?.resumePageSampling()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -130,7 +140,12 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         NotificationCenter.default.post(name: .lumenModuleDidResume, object: module.rawValue)
     }
 
-    func windowWillClose(_ notification: Notification) { suspendPageSampling() }
+    func windowDidMove(_ notification: Notification) { rememberFrame() }
+    func windowDidResize(_ notification: Notification) { rememberFrame() }
+    private func rememberFrame() {
+        if let window, window.isVisible { Self.functionalFrame = window.frame }
+    }
+    func windowWillClose(_ notification: Notification) { rememberFrame(); suspendPageSampling() }
     @objc private func refreshLanguage() {
         guard let window else { return }
         NativeLocalization.refresh(window)
@@ -159,6 +174,8 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             _ = Self.open(next)
         }
         let hosting = NSHostingView(rootView: root)
+        // The shared shell owns window geometry; page ideal sizes must not resize it.
+        hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView(frame: NSRect(origin: .zero, size: window.contentView?.bounds.size ?? window.frame.size))
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -1440,11 +1457,11 @@ final class QuickActionShortcutCaptureButton: NSButton {
 
 private final class PreferencesWindowController: NSWindowController {
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: LumenWindowMetrics.size(for: .preferences)),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = L10n.text("设置")
-        window.minSize = NSSize(width: 900, height: 540)
+        window.minSize = LumenWindowMetrics.minimumSize(for: .preferences)
         window.backgroundColor = canvas
         window.appearance = DashboardWindow.preferredAppearance
         window.contentViewController = NSHostingController(rootView: LumenPreferencesView())
@@ -2560,6 +2577,7 @@ private struct ApplicationUninstallerView: View {
 
 // Health checks are read-only; cache actions use the existing verified trash plan.
 private final class MacHealthModel: ObservableObject {
+    @Published var externalDisks: [MountedDiskUsage] = []
     @Published var hardware: HardwareSnapshot?
     @Published var inspection: [MachineInspectionItem] = []
     @Published var snapshot: SystemSnapshot?
@@ -2654,6 +2672,24 @@ private final class MacHealthModel: ObservableObject {
             }
         }
         return matches.sorted { $0.allocatedSize > $1.allocatedSize }
+    }
+}
+
+private struct MountedDiskUsage: Identifiable {
+    let url: URL
+    let name: String
+    let total: Int64
+    let available: Int64
+    var id: String { url.path }
+    var used: Int64 { max(0, total - available) }
+    static func externalDisks() -> [Self] {
+        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey, .volumeIsInternalKey, .volumeIsLocalKey]
+        return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? []).compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: keys), values.volumeIsInternal == false,
+                  values.volumeIsLocal == true, let total = values.volumeTotalCapacity,
+                  let available = values.volumeAvailableCapacity else { return nil }
+            return Self(url: url, name: values.volumeName ?? url.lastPathComponent, total: Int64(total), available: Int64(available))
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 }
 
@@ -2847,8 +2883,9 @@ private struct MacHealthView: View {
                             }
                         }
                         ForEach(Array(fanRPMReadings.enumerated()), id: \.offset) { _, rpm in
-                            Text(rpm).font(.system(size: 14, weight: .medium)).monospacedDigit()
-                                .frame(maxWidth: .infinity, alignment: .center)
+                            Label(rpm, systemImage: "fanblades")
+                                .font(.system(size: 14, weight: .medium)).monospacedDigit()
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     summaryCard("", symbol: nil, color: .purple) {
@@ -2933,6 +2970,24 @@ private struct MacHealthView: View {
                         } else {
                             Text(L10n.text("磁盘容量尚未读取")).foregroundStyle(.secondary)
                         }
+                        if !model.externalDisks.isEmpty {
+                            Divider()
+                            ScrollView(.vertical) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(model.externalDisks) { disk in
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "externaldrive.fill").foregroundStyle(.purple)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(disk.name).font(.system(size: 12, weight: .semibold))
+                                                Text(L10n.format("已用 %{0} / 共 %{1} · 可用 %{2}", arguments: [size(disk.used), size(disk.total), size(disk.available)]))
+                                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                            }
+                                            Spacer(minLength: 0)
+                                        }.help(disk.url.path)
+                                    }
+                                }
+                            }.frame(maxHeight: 110)
+                        }
                         Divider()
                         HStack {
                             Spacer()
@@ -2945,7 +3000,7 @@ private struct MacHealthView: View {
                             .disabled(searchingLargeFiles || model.scanning)
                         }
                     }
-                    .frame(height: 360, alignment: .topLeading)
+                    .frame(height: model.externalDisks.isEmpty ? 360 : 470, alignment: .topLeading)
                     panel("应用分析", symbol: "square.stack.3d.up.fill", color: .indigo,
                           headerAction: AnyView(
                             Button { _ = DashboardWindow.open(.uninstaller) } label: {
@@ -3323,8 +3378,11 @@ struct LegacyMacHealthPage: View {
     var body: some View {
         MacHealthView(model: controller.model, scan: controller.scan, clean: controller.clean)
             .onAppear {
+                controller.refreshVolumes()
                 if controller.model.checkedAt == nil { controller.scan() }
             }
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in controller.refreshVolumes() }
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in controller.refreshVolumes() }
     }
 }
 
@@ -3333,6 +3391,13 @@ private final class LegacyMacHealthController: ObservableObject {
     private var cacheEntries: [CacheEntry] = []
     private var scanGeneration = 0
     private var scanInProgress = false
+
+    func refreshVolumes() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let disks = MountedDiskUsage.externalDisks()
+            DispatchQueue.main.async { self?.model.externalDisks = disks }
+        }
+    }
 
     func scan() {
         guard !scanInProgress else { return }
@@ -3348,12 +3413,14 @@ private final class LegacyMacHealthController: ObservableObject {
             guard let self else { return }
             let hardware = HardwareSnapshot.read()
             let snapshot = SystemMonitor().sample()
+            let externalDisks = MountedDiskUsage.externalDisks()
             let inspection = MachineInspection.read()
             let userFolders = MacHealthModel.scanUserFolders()
             DispatchQueue.main.async {
                 guard generation == self.scanGeneration else { return }
                 self.model.hardware = hardware
                 self.model.snapshot = snapshot
+                self.model.externalDisks = externalDisks
                 self.model.inspection = inspection
                 self.model.userFolders = userFolders
                 self.model.phase = "正在分析应用与启动配置…"
@@ -3767,6 +3834,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
     private let searchIcon = NSImageView()
     private let table = QuickActionTableView()
     private let scroll = NSScrollView()
+    private let separator = NSBox()
     private let actions: [(String, String, DashboardWindow.Module)] = [
         ("搜索应用与文件", "search apps files", .search), ("剪贴板历史", "clipboard history", .clipboard),
         ("文件活动", "files audit", .files), ("进程管理", "process", .processes),
@@ -3789,6 +3857,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        panel.alphaValue = 0.8
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
@@ -3823,7 +3892,14 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         table.backgroundColor = .clear
+        table.usesAlternatingRowBackgroundColors = false
+        table.selectionHighlightStyle = .none
+        scroll.contentView.drawsBackground = false
         scroll.isHidden = true
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.isHidden = true
+        root.addSubview(separator)
         for view in [search, scroll] { view.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(view) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 40),
@@ -3836,8 +3912,12 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
             // Use its natural text height and center that frame with the icon.
             search.centerYAnchor.constraint(equalTo: root.topAnchor, constant: 54),
             search.heightAnchor.constraint(equalToConstant: search.intrinsicContentSize.height),
+            separator.topAnchor.constraint(equalTo: root.topAnchor, constant: 83),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 40),
+            separator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -36),
             scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 86),
-            scroll.leadingAnchor.constraint(equalTo: search.leadingAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 40),
             scroll.trailingAnchor.constraint(equalTo: search.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -22)
         ])
@@ -3910,6 +3990,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         let selectedID = filtered.indices.contains(table.selectedRow) ? filtered[table.selectedRow].id : nil
         filtered = entries
         scroll.isHidden = filtered.isEmpty
+        separator.isHidden = filtered.isEmpty
         if let window {
             let height: CGFloat = filtered.isEmpty ? 108 : 118 + CGFloat(min(filtered.count, 6)) * table.rowHeight
             var frame = window.frame
@@ -3933,9 +4014,11 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
         icon.imageScaling = .scaleProportionallyDown
         if entry.image == nil { icon.contentTintColor = .secondaryLabelColor }
         let title = NSTextField(labelWithString: { if case .item = entry.target { return entry.title }; return L10n.text(entry.title) }())
+        title.alignment = .left
         title.font = .systemFont(ofSize: 15, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
         let detail = NSTextField(labelWithString: { if case .item(let item) = entry.target { return L10n.text(item.typeLabel) + " · " + item.path }; if case .command = entry.target { return entry.detail }; return L10n.text(entry.detail) }())
+        detail.alignment = .left
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingMiddle

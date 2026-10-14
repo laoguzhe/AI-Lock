@@ -42,8 +42,7 @@ enum ScreenRecorderQuality: String, CaseIterable, Identifiable {
 
 final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable {
     struct DisplayOption: Identifiable {
-        let display: SCDisplay
-        var id: UInt32 { display.displayID }
+        let id: UInt32
         var title: String {
             NSScreen.screens.first {
                 ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
@@ -54,6 +53,8 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
     @Published private(set) var displays: [DisplayOption] = []
     @Published var selectedDisplayID: UInt32?
     @Published private(set) var isRecording = false
+    @Published private(set) var isStarting = false
+    @Published private(set) var hasScreenPermission = CGPreflightScreenCaptureAccess()
     @Published private(set) var elapsedSeconds = 0
     @Published private(set) var status = "正在读取可录制的显示器…"
     @Published private(set) var outputURL: URL?
@@ -74,30 +75,40 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
     }
 
     func refreshDisplays() {
-        status = "正在读取可录制的显示器…"
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                let options = content.displays.map(DisplayOption.init(display:))
-                displays = options
-                if !options.contains(where: { $0.id == self.selectedDisplayID }) {
-                    selectedDisplayID = options.first?.id
-                }
-                status = options.isEmpty ? "没有找到可录制的显示器。" : ""
-            } catch {
-                displays = []
-                status = "无法读取显示器：\(error.localizedDescription)"
-            }
+        // Listing connected screens does not require capture authorization.
+        displays = NSScreen.screens.compactMap { screen in
+            guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return nil }
+            return DisplayOption(id: id)
+        }
+        if !displays.contains(where: { $0.id == selectedDisplayID }) { selectedDisplayID = displays.first?.id }
+        hasScreenPermission = CGPreflightScreenCaptureAccess()
+        status = displays.isEmpty ? "没有找到可录制的显示器。" : (hasScreenPermission ? "" : "开始录制时将请求屏幕与系统录音权限。")
+    }
+
+    func requestScreenPermission() {
+        hasScreenPermission = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
+        status = hasScreenPermission ? "录屏权限已开启。" : "请在系统设置中允许 AI Lock 的屏幕与系统录音权限，必要时退出后重开。"
+        if !hasScreenPermission, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
         }
     }
 
+    @MainActor
+    func identifySelectedDisplay() {
+        guard !isRecording, !isStarting, let selectedDisplayID else { return }
+        DisplaySelectionIndicator.flash(selectedDisplayID)
+    }
+
+    @MainActor
     func startRecording(in directory: URL, quality: ScreenRecorderQuality) {
+        guard !isRecording, !isStarting, !isStopping else { return }
         guard let selectedDisplayID,
               displays.contains(where: { $0.id == selectedDisplayID }) else {
             status = "请先选择一个显示器。"
             return
         }
+        isStarting = true
+        DisplaySelectionIndicator.clear()
         let url = Self.uniqueOutputURL(in: directory)
         Task { @MainActor in await self.startRecording(to: url, displayID: selectedDisplayID, quality: quality) }
     }
@@ -132,8 +143,14 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         }
     }
 
+    @MainActor
     private func startRecording(to url: URL, displayID: UInt32, quality: ScreenRecorderQuality) async {
-        guard let display = displays.first(where: { $0.id == displayID })?.display else { return }
+        defer { isStarting = false }
+        hasScreenPermission = CGPreflightScreenCaptureAccess()
+        if !hasScreenPermission {
+            requestScreenPermission()
+            guard hasScreenPermission else { return }
+        }
         status = "正在启动录制…"
         outputURL = url
         elapsedSeconds = 0
@@ -141,7 +158,7 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let currentDisplay = content.displays.first(where: { $0.displayID == display.displayID }) else {
+            guard let currentDisplay = content.displays.first(where: { $0.displayID == displayID }) else {
                 throw RecorderError.displayUnavailable
             }
             let filter = SCContentFilter(display: currentDisplay, excludingWindows: [])
@@ -192,12 +209,14 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
             startDate = Date()
             status = "正在录制屏幕与系统声音。"
             timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            let clock = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, let startDate = self.startDate else { return }
                     self.elapsedSeconds = Int(Date().timeIntervalSince(startDate))
                 }
             }
+            timer = clock
+            RunLoop.main.add(clock, forMode: .common)
         } catch {
             stream = nil
             writer?.cancelWriting()
@@ -206,10 +225,12 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
             videoInput = nil
             audioInput = nil
             self.outputURL = nil
-            status = "录制未能启动：\(error.localizedDescription) 请在系统设置的“隐私与安全性 → 屏幕与系统录音”中允许 AI Lock 后重试。"
+            hasScreenPermission = CGPreflightScreenCaptureAccess()
+            status = "录制未能启动：\(error.localizedDescription)" + (hasScreenPermission ? "" : " 请在系统设置的“隐私与安全性 → 屏幕与系统录音”中允许 AI Lock 后重试。")
         }
     }
 
+    @MainActor
     private func finishUI(message: String) {
         timer?.invalidate()
         timer = nil
@@ -227,7 +248,7 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
     private static func uniqueOutputURL(in directory: URL) -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let baseName = "录屏-\(formatter.string(from: Date()))"
+        let baseName = L10n.text("录屏") + "-" + formatter.string(from: Date())
         var candidate = directory.appendingPathComponent(baseName).appendingPathExtension("mov")
         var suffix = 2
         while FileManager.default.fileExists(atPath: candidate.path) {
@@ -242,8 +263,8 @@ final class ScreenRecorderModel: NSObject, ObservableObject, @unchecked Sendable
         case writerUnavailable
         var errorDescription: String? {
             switch self {
-            case .displayUnavailable: "所选显示器已断开。"
-            case .writerUnavailable: "无法创建视频编码器。"
+            case .displayUnavailable: L10n.text("所选显示器已断开。")
+            case .writerUnavailable: L10n.text("无法创建视频编码器。")
             }
         }
     }
@@ -281,148 +302,44 @@ extension ScreenRecorderModel: SCStreamOutput, SCStreamDelegate {
     }
 }
 
-struct ScreenRecorderView: View {
-    @StateObject private var model = ScreenRecorderModel()
-    @AppStorage("screenRecorder.quality") private var qualityRawValue = ScreenRecorderQuality.p1080.rawValue
-    @AppStorage("screenRecorder.outputDirectory") private var outputDirectoryPath = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
-    @AppStorage("screenRecorder.shortcut.keyCode") private var recorderShortcutKeyCode = 0
-    @AppStorage("screenRecorder.shortcut.modifiers") private var recorderShortcutModifiers = 0
-
-    private var quality: ScreenRecorderQuality {
-        ScreenRecorderQuality(rawValue: qualityRawValue) ?? .p1080
-    }
-
-    var body: some View {
-        let _ = recorderShortcutKeyCode
-        let _ = recorderShortcutModifiers
-        VStack(alignment: .leading, spacing: 10) {
-            settingRow(L10n.text("显示器")) {
-                Picker(L10n.text("显示器"), selection: $model.selectedDisplayID) {
-                    ForEach(model.displays) { option in
-                        Text(option.title).tag(Optional(option.id))
-                    }
-                }
-                .labelsHidden()
-                .disabled(model.isRecording || model.displays.isEmpty)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            settingRow(L10n.text("清晰度")) {
-                Picker(L10n.text("清晰度"), selection: $qualityRawValue) {
-                    ForEach(ScreenRecorderQuality.allCases) { option in
-                        Text(option.title).tag(option.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .disabled(model.isRecording)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            settingRow(L10n.text("保存位置")) {
-                HStack(spacing: 8) {
-                    Text(outputDirectoryPath)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(L10n.text("更改…"), action: chooseOutputDirectory)
-                        .disabled(model.isRecording)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                if model.isRecording {
-                    HStack(spacing: 10) {
-                        Text("\(L10n.text("录制中"))  \(duration(model.elapsedSeconds))")
-                            .font(.system(.body, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(.red)
-                        Button(role: .destructive) { model.stopRecording() } label: {
-                            Label(L10n.text("停止录制"), systemImage: "stop.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                    }
-                } else {
-                    Button { model.startRecording(in: outputDirectoryURL, quality: quality) } label: {
-                        Label(L10n.text("开始录制"), systemImage: "record.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.large)
-                    .containerRelativeFrame(.horizontal, count: 4, spacing: 0, alignment: .leading)
-                    .disabled(model.displays.isEmpty)
-                }
-
-                Label("\(DashboardWindow.screenRecorderShortcutTitle) · \(L10n.text("开始 / 停止"))", systemImage: "keyboard")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text(L10n.text("截屏快捷键：Shift + Command + 4 截图保存在桌面"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if !model.status.isEmpty {
-                    Text(model.status)
-                        .font(.caption)
-                        .foregroundStyle(model.status.contains("未能") || model.status.contains("中断") ? Color.red : Color.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(2)
-                }
-
-                if let url = model.outputURL, !model.isRecording {
-                    HStack {
-                        Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button(L10n.text("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                            .buttonStyle(.link)
-                    }
-                }
-            }
-            .padding(.top, 2)
-        }
-        .padding(4)
-        .frame(minWidth: 500, minHeight: 230, alignment: .topLeading)
-        .onReceive(NotificationCenter.default.publisher(for: .screenRecorderShortcut)) { _ in
-            if model.isRecording { model.stopRecording() }
-            else { model.startRecording(in: outputDirectoryURL, quality: quality) }
-        }
-    }
-
-    private func settingRow<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(spacing: 12) {
-            Text(title)
-                .foregroundStyle(.primary)
-                .frame(width: 72, alignment: .leading)
-            content()
-        }
-        .frame(minHeight: 32)
-    }
-
-    private var outputDirectoryURL: URL {
-        URL(fileURLWithPath: outputDirectoryPath, isDirectory: true)
-    }
-
-    private func chooseOutputDirectory() {
-        let panel = NSOpenPanel()
-        panel.title = L10n.text("选择录屏保存位置")
-        panel.prompt = L10n.text("选择")
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = outputDirectoryURL
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        outputDirectoryPath = url.path
-    }
-
-    private func duration(_ seconds: Int) -> String {
-        String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
-    }
-}
-
 extension Notification.Name {
     static let screenRecorderShortcut = Notification.Name("AILockScreenRecorderShortcut")
+}
+
+/// Brief click-through outline; never activates or moves the application window.
+@MainActor
+enum DisplaySelectionIndicator {
+    private static var panel: NSPanel?
+    private static var animation: Task<Void, Never>?
+    static func clear() {
+        animation?.cancel(); animation = nil
+        panel?.orderOut(nil); panel = nil
+    }
+    static func flash(_ id: CGDirectDisplayID) {
+        clear()
+        guard let screen = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
+        }) else { return }
+        let outline = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        outline.isOpaque = false; outline.backgroundColor = .clear
+        outline.hasShadow = false; outline.ignoresMouseEvents = true
+        outline.level = .screenSaver
+        outline.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        let border = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        border.wantsLayer = true
+        border.layer?.borderWidth = 6
+        border.layer?.borderColor = NSColor.systemGreen.cgColor
+        outline.contentView = border
+        panel = outline
+        outline.orderFrontRegardless()
+        animation = Task { @MainActor in
+            for step in 0..<6 {
+                guard !Task.isCancelled else { return }
+                outline.alphaValue = step % 2 == 0 ? 1 : 0.15
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard !Task.isCancelled else { return }
+            clear()
+        }
+    }
 }

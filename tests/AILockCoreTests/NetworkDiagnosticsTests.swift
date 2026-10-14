@@ -108,7 +108,7 @@ final class NetworkDiagnosticsTests: XCTestCase {
     }
     func testComprehensivePlanIncludesAllDiagnosticsAndPreservesSettings() {
         let plans = NetworkDiagnosticPlan.comprehensive(interfaces: ["en0", "en1"], target: "example.com", port: 8443, resolver: "9.9.9.9", nodes: NetworkDiagnosticNode.defaults)
-        XCTAssertEqual(plans.map(\.kind), [.speed, .local, .regional, .dns, .route, .ping, .port, .ipv6, .nodes])
+        XCTAssertEqual(plans.map(\.kind), [.local, .speed, .regional, .dns, .route, .ping, .port, .ipv6, .nodes])
         XCTAssertTrue(plans.allSatisfy { $0.target == "example.com" && $0.port == 8443 && $0.interfaces == ["en0", "en1"] })
         XCTAssertEqual(plans.first { $0.kind == .dns }?.dnsServers.last, "9.9.9.9")
         XCTAssertEqual(plans.reduce(0) { $0 + $1.expectedResultCount }, 107)

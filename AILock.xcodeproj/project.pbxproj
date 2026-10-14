@@ -5,9 +5,13 @@
 	"objectVersion" = "56";
 	"archiveVersion" = "1";
 	"objects" = {
+		"AA20261014B1000000000001" = { "isa" = "PBXFileReference"; "name" = "en"; "path" = "Resources/en.lproj/InfoPlist.strings"; "lastKnownFileType" = "text.plist.strings"; "sourceTree" = "<group>"; };
+		"AA20261014B1000000000002" = { "isa" = "PBXFileReference"; "name" = "zh-Hans"; "path" = "Resources/zh-Hans.lproj/InfoPlist.strings"; "lastKnownFileType" = "text.plist.strings"; "sourceTree" = "<group>"; };
+		"AA20261014B1000000000003" = { "isa" = "PBXVariantGroup"; "name" = "InfoPlist.strings"; "children" = ("AA20261014B1000000000001", "AA20261014B1000000000002",); "sourceTree" = "<group>"; };
+		"AA20261014B1000000000004" = { "isa" = "PBXBuildFile"; "fileRef" = "AA20261014B1000000000003"; };
 		"AA20261011A1000000000001" = { "isa" = "PBXFileReference"; "path" = "Resources/NetworkDiagnostics"; "lastKnownFileType" = "folder"; "sourceTree" = "<group>"; };
 		"AA20261011A1000000000002" = { "isa" = "PBXBuildFile"; "fileRef" = "AA20261011A1000000000001"; };
-		"AA20261011A1000000000003" = { "isa" = "PBXResourcesBuildPhase"; "buildActionMask" = "2147483647"; "files" = ("AA20261011A1000000000002",); "runOnlyForDeploymentPostprocessing" = "0"; };
+		"AA20261011A1000000000003" = { "isa" = "PBXResourcesBuildPhase"; "buildActionMask" = "2147483647"; "files" = ("AA20261011A1000000000002", "AA20261014B1000000000004",); "runOnlyForDeploymentPostprocessing" = "0"; };
 		"AA20261011A1000000000004" = { "isa" = "PBXFileReference"; "path" = "ScreenRecorder.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"AA20261011A1000000000005" = { "isa" = "PBXBuildFile"; "fileRef" = "AA20261011A1000000000004"; };
 		"AA20261011A1000000000006" = { "isa" = "PBXFileReference"; "path" = "DisplayBrightness.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
@@ -172,6 +176,7 @@
 				"2896CCD8CC8F3AEA32B32E30",
 				"77F64D9B12CC6820E6383591",
                 "AA20261011A1000000000001",
+                "AA20261014B1000000000003",
 				"AA20261010D1A600000000011",
                 "AA20261010D1A600000000001",
 				"8E046561869AEC82A1A18E32",
@@ -210,7 +215,6 @@
 				"E10000000000000000000005",
 				"E10000000000000000000006",
 				"E10000000000000000000007",
-				"E10000000000000000000008",
 				"E10000000000000000000009",
 				"E1000000000000000000000A",
 				"E1000000000000000000000B",
@@ -381,10 +385,11 @@
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "AI Lock";
-				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。";
-				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。";
+				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "When enabled, AI Lock audits file operations in selected directories and filters connections.";
+				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "When a startup item cannot be removed due to system permissions, AI Lock asks Finder to move the startup item you confirmed to Trash.";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "AILock";
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CURRENT_PROJECT_VERSION" = "3";
@@ -448,10 +453,11 @@
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "AI Lock";
-				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。";
-				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。";
+				"INFOPLIST_KEY_NSSystemExtensionUsageDescription" = "When enabled, AI Lock audits file operations in selected directories and filters connections.";
+				"INFOPLIST_KEY_NSAppleEventsUsageDescription" = "When a startup item cannot be removed due to system permissions, AI Lock asks Finder to move the startup item you confirmed to Trash.";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "AILock";
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CURRENT_PROJECT_VERSION" = "3";
@@ -643,6 +649,7 @@
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CODE_SIGN_ENTITLEMENTS" = "extensions/EndpointSecurity/prototype.entitlements";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "AuditPrototype";
 				"SWIFT_VERSION" = "5.0";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "com.laogu.ailock.auditprototype";
@@ -719,7 +726,6 @@
 				"E20000000000000000000005",
 				"E20000000000000000000006",
 				"E20000000000000000000007",
-				"E20000000000000000000008",
 				"E20000000000000000000009",
 				"E2000000000000000000000A",
 				"E2000000000000000000000B",
@@ -748,6 +754,7 @@
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CODE_SIGN_ENTITLEMENTS" = "extensions/ContentFilter/prototype.entitlements";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "FilterPrototype";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SWIFT_VERSION" = "5.0";
@@ -832,6 +839,7 @@
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CODE_SIGN_ENTITLEMENTS" = "extensions/ContentFilter/prototype.entitlements";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "FilterPrototype";
 				"CODE_SIGN_STYLE" = "Automatic";
 				"SWIFT_VERSION" = "5.0";
@@ -975,6 +983,7 @@
 				"ALWAYS_SEARCH_USER_PATHS" = "NO";
 				"CODE_SIGN_ENTITLEMENTS" = "extensions/EndpointSecurity/prototype.entitlements";
 				"SDKROOT" = "macosx";
+				"ARCHS" = "arm64";
 				"PRODUCT_NAME" = "AuditPrototype";
 				"SWIFT_VERSION" = "5.0";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "com.laogu.ailock.auditprototype";
@@ -1103,7 +1112,6 @@
 		"E10000000000000000000005" = { "isa" = "PBXFileReference"; "path" = "LumenNetworkView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"E10000000000000000000006" = { "isa" = "PBXFileReference"; "path" = "LumenFileActivityView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"E10000000000000000000007" = { "isa" = "PBXFileReference"; "path" = "LumenClipboardView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
-		"E10000000000000000000008" = { "isa" = "PBXFileReference"; "path" = "LumenHealthView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"E10000000000000000000009" = { "isa" = "PBXFileReference"; "path" = "LumenUninstallerView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"E1000000000000000000000A" = { "isa" = "PBXFileReference"; "path" = "LumenLogsView.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
 		"E1000000000000000000000B" = { "isa" = "PBXFileReference"; "path" = "LumenScreenViews.swift"; "lastKnownFileType" = "sourcecode.swift"; "sourceTree" = "<group>"; };
@@ -1116,7 +1124,6 @@
 		"E20000000000000000000005" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000005"; };
 		"E20000000000000000000006" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000006"; };
 		"E20000000000000000000007" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000007"; };
-		"E20000000000000000000008" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000008"; };
 		"E20000000000000000000009" = { "isa" = "PBXBuildFile"; "fileRef" = "E10000000000000000000009"; };
 		"E2000000000000000000000A" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000A"; };
 		"E2000000000000000000000B" = { "isa" = "PBXBuildFile"; "fileRef" = "E1000000000000000000000B"; };

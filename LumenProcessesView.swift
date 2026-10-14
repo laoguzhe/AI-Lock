@@ -290,6 +290,7 @@ final class ProcessesModel: ObservableObject {
 // ============================================================================
 
 struct LumenProcessesView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = ProcessesModel()
 
     private static let columns: [ColumnSpec] = [
@@ -304,6 +305,7 @@ struct LumenProcessesView: View {
     ]
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .processes,
             subtitle: subtitle,
@@ -321,7 +323,7 @@ struct LumenProcessesView: View {
     private var subtitle: String {
         UnitFormat.joined([
             L10n.text(model.status),
-            L10n.format("已按%{0}%{1}排序", arguments: [
+            L10n.format("已按%{0} · %{1}排序", arguments: [
                 L10n.text(model.sortKey.title),
                 L10n.text(model.ascending ? "升序" : "降序")
             ])

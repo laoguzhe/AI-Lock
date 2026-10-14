@@ -53,7 +53,7 @@ PY
 TEAM_ID="$(cat "$PACKAGE_DIR/team")"
 xcodebuild -project AILock.xcodeproj -scheme "$TARGET" -configuration Release \
     -derivedDataPath "$PACKAGE_DIR/derived" CODE_SIGNING_ALLOWED=NO \
-    DEVELOPMENT_TEAM="$TEAM_ID" ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO build > "$PACKAGE_DIR/build.log" 2>&1 || {
+    DEVELOPMENT_TEAM="$TEAM_ID" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build > "$PACKAGE_DIR/build.log" 2>&1 || {
     tail -35 "$PACKAGE_DIR/build.log" >&2; exit 1;
 }
 EXTENSION="$PACKAGE_DIR/derived/Build/Products/Release/$TARGET.systemextension"

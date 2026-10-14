@@ -8,7 +8,7 @@
 ./extensions/build-prototypes.sh
 ```
 
-产出 arm64/x86_64 通用原型；Xcode 工程包含 AILock、AuditPrototype 和 FilterPrototype。编译通过不代表系统授权通过。
+产出 Apple Silicon（arm64）原型；Xcode 工程包含 AILock、AuditPrototype 和 FilterPrototype。编译通过不代表系统授权通过。
 
 已有获批配置文件和匹配 Developer ID 身份时，可先构建主应用，再选择打包：
 

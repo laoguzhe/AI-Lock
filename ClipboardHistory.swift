@@ -205,7 +205,7 @@ final class ClipboardHistory: NSObject {
         guard timer == nil else { return }
         retriesEnabled = true
         if !canSave { scheduleReadRetry() }
-        lastChangeCount = pasteboard.changeCount
+        lastChangeCount = -1
         prune()
         if !records.isEmpty || FileManager.default.fileExists(atPath: fileURL.path) || repository.map({ FileManager.default.fileExists(atPath: $0.url.path) }) == true { save() }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
@@ -327,16 +327,33 @@ final class ClipboardHistory: NSObject {
         exclude(bundleID: bundleID)
     }
 
+    var pasteboardAccessDenied: Bool {
+        if #available(macOS 15.4, *) { return pasteboard.accessBehavior == .alwaysDeny }
+        return false
+    }
+
+    /// A user-visible retry also reads the contents that were present at launch.
+    @discardableResult
+    func readCurrentClipboard() -> Bool {
+        guard canSave, !isLoadingHistory, !isPaused else { return false }
+        let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        guard !excludedBundleIDs.contains(frontBundle) else { return false }
+        let count = pasteboard.changeCount
+        guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return false }
+        capture(items, sourceBundleID: frontBundle)
+        lastChangeCount = count
+        return true
+    }
+
     private func poll() {
         guard !isLoadingHistory else { return }
         if Date().timeIntervalSince(lastPruneAt) >= 60 { prune(); lastPruneAt = Date() }
-        guard pasteboard.changeCount != lastChangeCount else { return }
-        lastChangeCount = pasteboard.changeCount
-        guard !isPaused else { return }
+        guard !isPaused, !pasteboardAccessDenied, pasteboard.changeCount != lastChangeCount else { return }
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        guard !excludedBundleIDs.contains(frontBundle),
-              let items = pasteboard.pasteboardItems else { return }
-        capture(items, sourceBundleID: frontBundle)
+        if excludedBundleIDs.contains(frontBundle) { lastChangeCount = pasteboard.changeCount; return }
+        // Do not consume a change when permission/read access failed: after the
+        // user allows access the same copy can still be captured.
+        _ = readCurrentClipboard()
     }
 
     // Shared by polling and isolated tests. Reject oversized/sensitive copies in their entirety.

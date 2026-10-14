@@ -1,0 +1,2 @@
+"NSSystemExtensionUsageDescription" = "When enabled, AI Lock audits file operations in selected directories and filters connections.";
+"NSAppleEventsUsageDescription" = "When a startup item cannot be removed due to system permissions, AI Lock asks Finder to move the startup item you confirmed to Trash.";

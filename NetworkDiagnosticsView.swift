@@ -14,10 +14,16 @@ final class NetworkDiagnosticsModel: ObservableObject {
     @Published var activeKind: NetworkDiagnosticKind?
     @Published var running = false
     @Published var phase = "点击开始诊断"
+    @Published private(set) var startedAt: Date?
+    private var runID = UUID()
     private var task: Task<Void, Never>?
     func refreshInterfaces() { interfaces = NetworkDiagnosticService.interfaces() }
     func start(_ plans: [NetworkDiagnosticPlan]) {
-        guard !running, !plans.isEmpty else { return }
+        guard !running else { return }
+        guard !plans.isEmpty else { phase = "没有可执行的诊断项目，请检查诊断参数。"; return }
+        runID = UUID()
+        let request = runID
+        startedAt = Date()
         running = true; phase = "测试中…"; jobCompleted = 0
         jobTotal = plans.reduce(0) { $0 + $1.expectedResultCount }
         results.removeAll(); resultKinds.removeAll(); liveSpeed = nil
@@ -25,31 +31,34 @@ final class NetworkDiagnosticsModel: ObservableObject {
             do {
                 for plan in plans {
                     try Task.checkCancellation()
-                    await self?.setActive(plan.kind)
+                    await self?.setActive(plan.kind, request: request)
                     do {
                         try await NetworkDiagnosticService.run(plan, liveSpeed: { [weak self] sample in
-                            await self?.updateLiveSpeed(sample)
+                            await self?.updateLiveSpeed(sample, request: request)
                         }) { [weak self] result in
-                            await self?.append(result, kind: plan.kind)
+                            await self?.append(result, kind: plan.kind, request: request)
                         }
                     } catch is CancellationError { throw CancellationError() }
                     catch {
-                        await self?.append(.init(plan.kind.title, passed: false, summary: error.localizedDescription), kind: plan.kind)
+                        await self?.append(.init(plan.kind.title, passed: false, summary: error.localizedDescription), kind: plan.kind, request: request)
                     }
                 }
-                await self?.finish("测试完成")
-            } catch is CancellationError { await self?.finish("测试已取消，已完成的结果保留") }
-            catch { await self?.finish(error.localizedDescription) }
+                await self?.finish("测试完成", request: request)
+            } catch is CancellationError { await self?.finish("测试已取消，已完成的结果保留", request: request) }
+            catch { await self?.finish(error.localizedDescription, request: request) }
         }
     }
-    private func updateLiveSpeed(_ sample: NetworkDiagnosticSpeedSample) {
+    private func updateLiveSpeed(_ sample: NetworkDiagnosticSpeedSample, request: UUID) {
+        guard request == runID else { return }
         liveSpeed = sample
         phase = "实时测速" + " · " + sample.line
     }
-    private func setActive(_ kind: NetworkDiagnosticKind) {
+    private func setActive(_ kind: NetworkDiagnosticKind, request: UUID) {
+        guard request == runID else { return }
         activeKind = kind; phase = "测试中… · " + kind.title
     }
-    private func append(_ result: NetworkDiagnosticResult, kind: NetworkDiagnosticKind) {
+    private func append(_ result: NetworkDiagnosticResult, kind: NetworkDiagnosticKind, request: UUID) {
+        guard request == runID else { return }
         resultKinds[result.id] = kind
         results.append(result)
         jobCompleted += 1
@@ -63,8 +72,17 @@ final class NetworkDiagnosticsModel: ObservableObject {
     func measurements(_ kinds: [NetworkDiagnosticKind]) -> [NetworkDiagnosticResult] {
         results.filter { resultKinds[$0.id].map(kinds.contains) ?? false }
     }
-    private func finish(_ phase: String) { self.phase = phase; running = false; activeKind = nil; liveSpeed = nil; task = nil }
-    func cancel() { if running { phase = "正在取消…"; task?.cancel() } }
+    private func finish(_ phase: String, request: UUID) {
+        guard request == runID else { return }
+        self.phase = phase; running = false; activeKind = nil; liveSpeed = nil; task = nil
+    }
+    func cancel() {
+        guard running else { return }
+        runID = UUID()
+        task?.cancel(); task = nil
+        phase = "测试已取消，已完成的结果保留"
+        running = false; activeKind = nil; liveSpeed = nil
+    }
     var report: String {
         "AI Lock · " + L10n.text("网络诊断") + "\n" + Date().formatted() + "\n\n" + results.map { result in
             let metrics = result.metrics.map { L10n.text($0.name) + ": " + L10n.text($0.value) }.joined(separator: "\n")
@@ -133,11 +151,15 @@ struct NetworkDiagnosticsView: View {
         let _ = english
         let _ = followsSystem
         GeometryReader { geometry in
-            let contentHeight = max(360, geometry.size.height - 148)
+            let contentHeight = max(300, geometry.size.height - (validation.isEmpty ? 148 : 176))
             let miniHeight = (contentHeight - 120) / 2
             VStack(spacing: 10) {
                 header
                 controls
+                if !validation.isEmpty {
+                    Text(L10n.text(validation)).foregroundStyle(DiagnosticConsole.amber)
+                        .font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .leading)
+                }
                 HStack(spacing: 10) {
                     card("地区延时地图", code: "02 / ms", kinds: [.regional, .nodes]) { nodesDashboard }
                         .frame(width: (geometry.size.width - 30) * 0.50)
@@ -194,6 +216,7 @@ struct NetworkDiagnosticsView: View {
             }.labelsHidden().frame(width: 160).disabled(model.running || allInterfaces)
             Button { showingSettings = true } label: { Label(L10n.text("诊断参数"), systemImage: "slider.horizontal.3") }.disabled(model.running)
             if model.running {
+                ProgressView().controlSize(.small)
                 Button { model.cancel() } label: { Label(L10n.text("取消测试"), systemImage: "stop.fill") }.tint(DiagnosticConsole.amber)
             } else {
                 Button { startAll() } label: { Label(L10n.text("开始诊断"), systemImage: "play.fill") }.buttonStyle(.borderedProminent)
@@ -357,7 +380,11 @@ struct NetworkDiagnosticsView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Circle().fill(model.running ? DiagnosticConsole.cyan : DiagnosticConsole.edge).frame(width: 5, height: 5)
-            Text(L10n.text(validation.isEmpty ? translated(model.phase) : validation)).lineLimit(1).foregroundStyle(validation.isEmpty ? DiagnosticConsole.muted : DiagnosticConsole.amber)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let elapsed = model.running ? model.startedAt.map { " · \(Int(context.date.timeIntervalSince($0)))s" } ?? "" : ""
+                Text(L10n.text(validation.isEmpty ? translated(model.phase) : validation) + elapsed)
+                    .lineLimit(1).foregroundStyle(validation.isEmpty ? DiagnosticConsole.muted : DiagnosticConsole.amber)
+            }
             Spacer()
             if model.running {
                 Text("\(model.jobCompleted)/\(model.jobTotal)")
@@ -418,6 +445,7 @@ struct NetworkDiagnosticsView: View {
     private func translated(_ text: String) -> String { text.components(separatedBy: " · ").map(L10n.text).joined(separator: " · ") }
     private func startAll() {
         validation = ""
+        model.refreshInterfaces()
         let host = target.trimmingCharacters(in: .whitespacesAndNewlines)
         let dns = resolver.trimmingCharacters(in: .whitespacesAndNewlines)
         let download = customDownload.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,7 +459,7 @@ struct NetworkDiagnosticsView: View {
         var nodes = NetworkDiagnosticNode.defaults.filter { selectedNodes.contains($0.id) }
         if !download.isEmpty { nodes.append(.init(id: "custom", name: "自定义节点", region: "自定义", download: download, upload: upload.isEmpty ? nil : upload)) }
         guard !nodes.isEmpty else { validation = "请至少选择一个节点"; return }
-        // Start with live bandwidth measurement; subsequent probes run after it completes.
+        // A quick local check provides a first result before bandwidth measurement.
         let plans = NetworkDiagnosticPlan.comprehensive(interfaces: lines, target: host, port: tcpPort, resolver: dns, nodes: nodes)
         displayLine = ""
         model.start(plans)

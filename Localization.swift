@@ -17,9 +17,9 @@ enum L10n {
     static func translate(_ source: String, english: Bool) -> String {
         if source == "DockLock" { return english ? "DockLock" : "锁定程序坞" }
         guard english, !source.isEmpty else { return source }
-        guard source.unicodeScalars.contains(where: { (0x4E00...0x9FFF).contains($0.value) }) else { return source }
         if let exact = catalog[source] { return exact }
-        return render(source, rules: rules) ?? source
+        let hasChinese = source.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+        return render(source, rules: hasChinese ? rules : nonChineseRules) ?? source
     }
 
     /// Compound status labels are app-owned; their components remain stable in models.
@@ -90,9 +90,52 @@ enum L10n {
     }
     private static let reverseCatalog = Dictionary(catalog.sorted { $0.key < $1.key }.filter { !$0.key.contains("%{") }.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
     private static let rules = makeRules(catalog.map { ($0.key, $0.value) })
+    private static let nonChineseRules = makeRules(catalog.filter {
+        !$0.key.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+    }.map { ($0.key, $0.value) })
     private static let reverseRules = makeRules(catalog.map { ($0.value, $0.key) })
 
     static let catalog: [String: String] = [
+        "好": "OK",
+        "切换语言": "Switch Language",
+        "高温": "High Temperature",
+        "严重过热": "Severe Overheating",
+        "检查剪贴板访问": "Check Clipboard Access",
+        "剪贴板读取已被系统拒绝，请在系统设置的隐私与安全性中允许 AI Lock 访问剪贴板。": "Clipboard access was denied. Allow AI Lock to access the clipboard in System Settings > Privacy & Security.",
+        "请先继续采集，再读取剪贴板。": "Resume collection before reading the clipboard.",
+        "已读取当前剪贴板。": "Current clipboard contents captured.",
+        "未读取到内容：请先复制普通文本，再重试；若系统询问，请允许剪贴板访问。": "No contents were read. Copy some plain text and try again; allow clipboard access if macOS asks.",
+        "系统已拒绝剪贴板访问，请点击「检查剪贴板访问」前往设置。": "Clipboard access was denied. Click Check Clipboard Access to open Settings.",
+        "复制内容后会在这里出现。没有内容时，可点击「检查剪贴板访问」重试，并允许系统的剪贴板访问请求。": "Copied content appears here. If nothing appears, click Check Clipboard Access to retry and allow the macOS clipboard access request.",
+        "一键清理异常启动项": "Clean Abnormal Startup Items",
+        "正在备份并清理异常启动项…": "Backing up and cleaning abnormal startup items…",
+        "一键清理会先备份，再移走目标缺失或无法解析的用户启动配置；其他异常需手动检查。移走配置不会立即停止服务。": "One-click cleanup backs up and removes user startup configurations with missing executables or invalid contents. Other issues need manual review. Removing a configuration does not immediately stop its service.",
+        "已备份并清理 %{0} 项异常启动配置。": "Backed up and removed %{0} abnormal startup configuration(s).",
+        "已备份并清理 %{0} 项异常启动配置。失败 %{1} 项：%{2}": "Backed up and removed %{0} abnormal startup configuration(s). Failed: %{1}. Details: %{2}",
+        "检查录屏权限": "Check Recording Permission",
+        "开始录制时将请求屏幕与系统录音权限。": "Screen & System Audio Recording permission will be requested when recording starts.",
+        "录屏权限已开启。": "Screen recording permission is enabled.",
+        "请在系统设置中允许 AI Lock 的屏幕与系统录音权限，必要时退出后重开。": "Allow Screen & System Audio Recording for AI Lock in System Settings. Quit and reopen the app if necessary.",
+        "没有收到录屏画面，请检查屏幕录制权限后重试。": "No video frames were received. Check screen recording permission and try again.",
+        "所选显示器已断开。": "The selected display is disconnected.",
+        "无法创建视频编码器。": "Unable to create the video encoder.",
+        "未知错误": "Unknown error",
+        "录制未能启动：%{0}": "Recording could not start: %{0}",
+        "无法保存录屏：%{0}": "Unable to save the recording: %{0}",
+        "录制已保存：%{0}": "Recording saved: %{0}",
+        "显示器音量": "Display Volume",
+        "未发现外接显示器。": "No external displays found.",
+        "选择外接显示器后调整亮度或音量。": "Select external displays to adjust their brightness or volume.",
+        "请选择要控制的显示器。": "Select the displays to control.",
+        "已选择 %{0} / %{1} 块显示器": "%{0} of %{1} displays selected",
+        "松开滑块后只控制所选显示器。显示器需支持并启用 DDC/CI；音量需要显示器支持扬声器音量命令。无法确认控制通道时会报告失败。": "Releasing a slider controls only the selected displays. DDC/CI must be supported and enabled; volume requires support for the speaker-volume command. Unidentified control channels are reported as failures.",
+        "正在发送显示器控制命令…": "Sending display control commands…",
+        "当前设备不支持 DDC 控制。": "DDC control is unavailable on this Mac.",
+        "请检查 DDC/CI、连接方式及显示器支持情况。": "Check DDC/CI, the connection, and display compatibility.",
+        "已向 %{0} 块显示器发送命令，%{1} 块失败。": "Commands sent to %{0} display(s); %{1} failed.",
+        "已向 %{0} 块显示器发送命令，%{1} 块失败。请检查 DDC/CI、连接方式及显示器支持情况。": "Commands sent to %{0} display(s); %{1} failed. Check DDC/CI, the connection, and display compatibility.",
+        "已用 %{0} / 共 %{1} · 可用 %{2}": "Used %{0} / Total %{1} · Available %{2}",
+        "没有可执行的诊断项目，请检查诊断参数。": "No diagnostic jobs are available. Check the diagnostic settings.",
         "序列号": "Serial Number",
         "在 Apple 官网核对": "Check with Apple",
         "Apple 查询可核对序列号对应的机型和保修信息；序列号本身不能证明整机原装。点击核对时会将序列号发送给 Apple。": "Apple's lookup can check the model and coverage associated with this serial number. A serial number alone cannot prove that the entire Mac is genuine. The serial number will be sent to Apple when you open the lookup.",
@@ -1486,7 +1529,7 @@ enum L10n {
         "停止录制时出错：%{0}": "Error stopping the recording: %{0}",
         "正在启动录制…": "Starting recording…",
         "正在录制屏幕与系统声音。": "Recording the screen and system audio.",
-        "录制未能启动：%{0} 请在系统设置的“隐私与安全性 → 屏幕与系统录音”中允许 AI Lock 后重试。": "Could not start recording: %{0} Allow AI Lock under System Settings → Privacy & Security → Screen & System Audio Recording, then try again.",
+        "录制未能启动：%{0} 请在系统设置的“隐私与安全性 → 屏幕与系统录音”中允许 AI Lock 后重试。": "Recording could not start: %{0} Allow AI Lock in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.",
         "录制中断：%{0}": "Recording interrupted: %{0}",
         "保存位置": "Save Location",
         "无法请求 Finder 删除此启动项。请在 Finder 中手动移入废纸篓，并按提示授权。": "Could not ask Finder to remove this startup item. Move it to the Trash in Finder and grant access when prompted.",
@@ -1693,7 +1736,7 @@ enum L10n {
         "可清理 %{0}": "Cleanable: %{0}",
         "升序": "Ascending",
         "降序": "Descending",
-        "已按%{0}%{1}排序": "Sorted by %{0} (%{1})",
+        "已按%{0} · %{1}排序": "Sorted by %{0} (%{1})",
         "点击卡片复制。": "Click a card to copy it.",
         "已复制纯文本": "Plain text copied.",
         "已清除备注": "Note cleared.",

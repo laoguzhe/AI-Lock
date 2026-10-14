@@ -94,6 +94,17 @@ let historyURL = root.appendingPathComponent("history.bin")
 let pasteboard = NSPasteboard.withUniqueName()
 defer { pasteboard.releaseGlobally() }
 let history = ClipboardHistory(fileURL: historyURL, defaults: defaults, pasteboard: pasteboard, keyProvider: { key })
+let initialPasteboard = NSPasteboard.withUniqueName()
+initialPasteboard.setString("copied before opening", forType: .string)
+let initialHistory = ClipboardHistory(fileURL: root.appendingPathComponent("initial-clipboard.bin"), defaults: defaults, pasteboard: initialPasteboard, keyProvider: { key })
+expect(initialHistory.readCurrentClipboard(), "clipboard reads content copied before opening")
+expect(initialHistory.records.first?.plainText == "copied before opening", "initial clipboard content is captured")
+initialHistory.setPaused(true)
+initialPasteboard.clearContents(); initialPasteboard.setString("must remain paused", forType: .string)
+expect(!initialHistory.readCurrentClipboard(), "permission retry respects paused collection")
+expect(initialHistory.records.count == 1, "retry does not capture while paused")
+initialHistory.setPaused(false)
+initialHistory.stop(); initialPasteboard.releaseGlobally()
 let first = NSPasteboardItem(); first.setString("file:///tmp/first.txt", forType: .fileURL)
 let second = NSPasteboardItem(); second.setString("file:///tmp/second.txt", forType: .fileURL)
 history.capture([first, second], sourceBundleID: "test.fixture")
@@ -217,7 +228,7 @@ value.swapUsed = 4_000_000_000
 value.batteryPercent = 20
 value.isOnBattery = true
 value.thermalLevel = 2
-expect(alerts.evaluate(value) == [.swap, .battery, .thermal], "swap, low battery, and thermal alerts trigger at their thresholds")
+expect(alerts.evaluate(value) == [.battery, .thermal], "low battery and thermal alerts trigger; swap usage alone is not memory pressure")
 value.isOnBattery = false
 expect(!alerts.evaluate(value).contains(.battery), "low battery alert clears when external power is connected")
 value.batteryPercent = nil

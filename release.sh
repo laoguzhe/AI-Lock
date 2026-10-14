@@ -36,6 +36,7 @@ BUILD_NUM="${BUILD_NUM:-$(cat BUILD_NUM)}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: gu lao (TQ74Z4L53F)}"
 PROFILE="${NOTARY_PROFILE:-docklock-notary}"
 BUILD_DIR="${BUILD_DIR:-build}"
+export AILOCK_ARCHS=arm64
 
 APP="$BUILD_DIR/AILock.app"
 DMG="$BUILD_DIR/AILock-$VERSION.dmg"
@@ -74,6 +75,8 @@ mv "$TEMP_DMG_BASE" "$TEMP_DMG"
 cleanup_release_artifacts() {
 	[[ -z "${STAGE:-}" || ! -d "$STAGE" ]] || rm -rf "$STAGE"
 	[[ -z "${TEMP_DMG:-}" || ! -f "$TEMP_DMG" ]] || rm -f "$TEMP_DMG"
+    rm -f "$BUILD_DIR/AILock.zip" "$BUILD_DIR/makeicon" "$BUILD_DIR/icon.png"
+    rm -rf "$BUILD_DIR/AILock.iconset"
 }
 trap cleanup_release_artifacts EXIT
 run_step "复制已公证的应用到 DMG 暂存目录" cp -R "$APP" "$STAGE/"

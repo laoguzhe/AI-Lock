@@ -9,6 +9,7 @@ import SwiftUI
 // ============================================================================
 
 struct LumenPreferencesView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @ObservedObject private var language = LumenLanguageState.shared
     @AppStorage("preferences.selectedSection") private var storedSection = "通用"
     @AppStorage("overview.language") private var selectedEnglish = false
@@ -52,6 +53,7 @@ struct LumenPreferencesView: View {
     }
 
     var body: some View {
+        let _ = localizationState.revision
         let _ = language.revision
         HStack(spacing: 0) {
             sidebar
@@ -204,7 +206,7 @@ struct LumenPreferencesView: View {
                             }
                         )) {
                             Text(L10n.text("跟随系统")).tag("system")
-                            Text("简体中文").tag("zh")
+                            Text(L10n.text("简体中文")).tag("zh")
                             Text("English").tag("en")
                         }
                         .labelsHidden()
@@ -483,12 +485,19 @@ struct LumenPreferencesView: View {
 // ============================================================================
 
 struct LumenAlertsThresholdsView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @State private var alerts = AppSettings.shared.alerts
-    @AppStorage("alert.camera.enabled") private var cameraMonitoringEnabled = false
-    @AppStorage("alert.microphone.enabled") private var microphoneMonitoringEnabled = false
+    @State private var cameraMonitoringEnabled = UserDefaults.standard.bool(forKey: "alert.camera.enabled")
+    @State private var microphoneMonitoringEnabled = UserDefaults.standard.bool(forKey: "alert.microphone.enabled")
     @State private var message: String?
+    @State private var savedAlerts = AppSettings.shared.alerts
+    @State private var isSaving = false
+    @State private var savedCamera = UserDefaults.standard.bool(forKey: "alert.camera.enabled")
+    @State private var savedMicrophone = UserDefaults.standard.bool(forKey: "alert.microphone.enabled")
+    private var hasChanges: Bool { alerts != savedAlerts || cameraMonitoringEnabled != savedCamera || microphoneMonitoringEnabled != savedMicrophone }
 
     var body: some View {
+        let _ = localizationState.revision
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
             LumenPanel("阈值", code: "ALERT") {
@@ -496,13 +505,13 @@ struct LumenAlertsThresholdsView: View {
                     SettingRow("摄像头使用提醒", detail: "需要启用后，才会在 macOS 报告摄像头正在使用时提醒") {
                         LumenToggle(isOn: Binding(
                             get: { cameraMonitoringEnabled },
-                            set: { cameraMonitoringEnabled = $0; NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
+                            set: { cameraMonitoringEnabled = $0 }
                         ))
                     }
                     SettingRow("麦克风使用提醒", detail: "需要启用后，才会在 macOS 报告麦克风正在使用时提醒") {
                         LumenToggle(isOn: Binding(
                             get: { microphoneMonitoringEnabled },
-                            set: { microphoneMonitoringEnabled = $0; NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil) }
+                            set: { microphoneMonitoringEnabled = $0 }
                         ))
                     }
                     row("处理器占用", $alerts.cpu, unit: "%", range: 1...100)
@@ -524,10 +533,26 @@ struct LumenAlertsThresholdsView: View {
 
             HStack(spacing: Lumen.Metrics.s3) {
                 Button(L10n.text("保存阈值")) {
-                    let ok = AppSettings.shared.saveAlerts(alerts)
-                    message = ok ? "阈值已保存，下次采样生效。" : "设置由更高版本写入，当前版本不会覆盖。"
+                    guard hasChanges, !isSaving else { return }
+                    isSaving = true
+                    let snapshot = alerts
+                    let camera = cameraMonitoringEnabled
+                    let microphone = microphoneMonitoringEnabled
+                    Task { @MainActor in
+                        await Task.yield()
+                        let ok = AppSettings.shared.saveAlerts(snapshot)
+                        if ok {
+                            savedAlerts = snapshot; savedCamera = camera; savedMicrophone = microphone
+                            UserDefaults.standard.set(camera, forKey: "alert.camera.enabled")
+                            UserDefaults.standard.set(microphone, forKey: "alert.microphone.enabled")
+                            NotificationCenter.default.post(name: .mediaMonitoringSettingsChanged, object: nil)
+                        }
+                        message = ok ? "阈值已保存，下次采样生效。" : "设置由更高版本写入，当前版本不会覆盖。"
+                        isSaving = false
+                    }
                 }
-                .lumenButton(.primary)
+                .lumenButton(hasChanges && !isSaving ? .primary : .secondary)
+                .disabled(!hasChanges || isSaving)
 
                 Button(L10n.text("测试提醒")) {
                     NotificationCenter.default.post(name: .resourceAlertPreview, object: nil)
@@ -549,7 +574,11 @@ struct LumenAlertsThresholdsView: View {
         }
         .scrollIndicators(.visible)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { alerts = AppSettings.shared.alerts }
+        .onAppear {
+            alerts = AppSettings.shared.alerts; savedAlerts = alerts
+            cameraMonitoringEnabled = UserDefaults.standard.bool(forKey: "alert.camera.enabled"); savedCamera = cameraMonitoringEnabled
+            microphoneMonitoringEnabled = UserDefaults.standard.bool(forKey: "alert.microphone.enabled"); savedMicrophone = microphoneMonitoringEnabled
+        }
     }
 
     private func row(_ title: String, _ value: Binding<Double>, unit: String, range: ClosedRange<Double>) -> some View {

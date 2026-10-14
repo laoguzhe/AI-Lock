@@ -153,9 +153,11 @@ final class LogsPageModel: ObservableObject {
 // ============================================================================
 
 struct LumenLogsView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = LogsPageModel()
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .logs,
             subtitle: model.status,

@@ -8,6 +8,8 @@ root = Path(__file__).resolve().parents[2]
 entry = re.compile(r'^\s*("(?:[^"\\]|\\.)*"): ("(?:[^"\\]|\\.)*"),$', re.M)
 catalog = {json.loads(k): json.loads(v) for k, v in entry.findall((root / 'Localization.swift').read_text())}
 call = re.compile(r'L10n\.(?:text|format)\(("(?:[^"\\]|\\.)*")(?=[,)])')
+# Lumen components translate their title/detail inputs internally.
+component = re.compile(r'\b(?:SettingRow|LumenPanel|MicroText|Pill|DetailPair|SearchBox|EmptyState|NoticeBar|PageHeader|PageFooter)\(\s*("(?:[^"\\]|\\.)*")|\b(?:title|subtitle|detail|leading|placeholder|text):\s*("(?:[^"\\]|\\.)*")')
 missing = []
 unlocalized = []
 # Check raw UI sinks too: checking only L10n calls misses entire new surfaces.
@@ -20,6 +22,14 @@ for path in root.glob('*.swift'):
         literal = match[1] or match[2]
         if re.search('[\u4e00-\u9fff]', literal):
             unlocalized.append(f'{path.name}:{source[:match.start()].count(chr(10)) + 1}: {literal}')
+    for match in component.finditer(source):
+        literal = match[1] or match[2]
+        try:
+            key = json.loads(literal)
+        except json.JSONDecodeError:
+            continue
+        if re.search('[\u4e00-\u9fff]', key) and key not in catalog:
+            missing.append(f'{path.name}: {key}')
     for match in call.finditer(source):
         try:
             key = json.loads(match[1])
@@ -28,7 +38,7 @@ for path in root.glob('*.swift'):
         if re.search('[\u4e00-\u9fff]', key) and key not in catalog:
             missing.append(f'{path.name}: {key}')
 for key, value in catalog.items():
-    if key == '中文':
+    if key in {'中文', '简体中文'}:
         continue  # Native language name in the language picker.
     assert not re.search('[\u4e00-\u9fff]', value), f'Chinese in English catalog: {key}'
     assert sorted(re.findall(r'%\{\d+\}', key)) == sorted(re.findall(r'%\{\d+\}', value)), f'Placeholder mismatch: {key}'

@@ -139,7 +139,7 @@ struct NetworkDiagnosticPlan: Sendable {
         kind == .local ? 1 : interfaces.count * (kind == .regional ? latencyRegions.count : kind == .nodes ? nodes.count : kind == .dns ? dnsServers.count : 1)
     }
     static func comprehensive(interfaces: [String], target: String, port: Int, resolver: String, nodes: [NetworkDiagnosticNode]) -> [Self] {
-        [NetworkDiagnosticKind.speed, .local, .regional, .dns, .route, .ping, .port, .ipv6, .nodes].map { kind in
+        [NetworkDiagnosticKind.local, .speed, .regional, .dns, .route, .ping, .port, .ipv6, .nodes].map { kind in
             var plan = Self(kind: kind)
             plan.interfaces = interfaces; plan.target = target; plan.port = port; plan.nodes = nodes
             if !resolver.isEmpty && !plan.dnsServers.contains(resolver) { plan.dnsServers.append(resolver) }

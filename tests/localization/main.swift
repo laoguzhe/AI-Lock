@@ -36,3 +36,15 @@ precondition(L10n.translate("12:34:56  采样发现连接结束", english: true)
 precondition(AppSettings.moduleNames["files"] == "文件活动")
 precondition(AppSettings.stableModuleCSV("文件活动,网络活动") == "files,network")
 print("PASS: language resolution, \(L10n.catalog.count) catalog templates, user content and stable module identifiers")
+
+for (source, target) in [
+    ("已选择 1 / 3 块显示器", "1 of 3 displays selected"),
+    ("已向 1 块显示器发送命令，2 块失败。请检查 DDC/CI、连接方式及显示器支持情况。", "Commands sent to 1 display(s); 2 failed. Check DDC/CI, the connection, and display compatibility."),
+    ("已用 40 GB / 共 100 GB · 可用 60 GB", "Used 40 GB / Total 100 GB · Available 60 GB"),
+    ("已备份并清理 3 项异常启动配置。失败 1 项：fixture", "Backed up and removed 3 abnormal startup configuration(s). Failed: 1. Details: fixture"),
+    ("录制未能启动：fixture 请在系统设置的“隐私与安全性 → 屏幕与系统录音”中允许 AI Lock 后重试。", "Recording could not start: fixture Allow AI Lock in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.")
+] {
+    precondition(L10n.translate(source, english: true) == target, "New feature status was not translated: " + source)
+    precondition(L10n.translate(source, english: false) == source)
+}
+print("PASS: new disk, display, startup cleanup and recording statuses in both languages")

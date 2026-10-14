@@ -207,9 +207,11 @@ final class UninstallerPageModel: ObservableObject {
 // ============================================================================
 
 struct LumenUninstallerView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = UninstallerPageModel()
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .uninstaller,
             subtitle: model.status,

@@ -12,3 +12,8 @@ build/
 
 # Runtime watch data created by local test runs
 /tests/.watch-*/
+
+# Generated crash reports and local agent state
+core
+core.*
+/.kilo/

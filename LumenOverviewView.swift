@@ -7,6 +7,7 @@ import SwiftUI
 // ============================================================================
 
 struct LumenOverviewView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @ObservedObject private var language = LumenLanguageState.shared
     @ObservedObject private var monitoring = MonitoringService.shared
     @ObservedObject private var organizer = MenuBarOrganizer.shared
@@ -31,6 +32,7 @@ struct LumenOverviewView: View {
     private let alerts = ResourceAlerts()
 
     var body: some View {
+        let _ = localizationState.revision
         let _ = language.revision
         VStack(alignment: .leading, spacing: 0) {
             topBar

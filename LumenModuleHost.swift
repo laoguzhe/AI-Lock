@@ -49,6 +49,7 @@ extension View {
 
 /// 按模块返回对应的 Lumen 页面。
 struct LumenModuleContent: View {
+    @ObservedObject private var language = LumenLanguageState.shared
     let module: DashboardWindow.Module
     let clipboardHistory: ClipboardHistory
     /// 侧栏切换时回调，由 DashboardWindow 决定开窗还是复用。
@@ -63,6 +64,7 @@ struct LumenModuleContent: View {
     }
 
     var body: some View {
+        let _ = language.revision
         LumenShell(selection: Binding(get: { module }, set: { onSelect($0) })) { current in
             page(for: current)
         }
@@ -131,26 +133,12 @@ struct NetworkDiagnosticsHost: View {
 // ============================================================================
 
 enum LumenWindowMetrics {
-    /// 统一外壳比旧版宽，因为多了 176pt 侧栏。
     static func size(for module: DashboardWindow.Module) -> NSSize {
-        switch module {
-        case .preferences:        return NSSize(width: 980, height: 660)
-        case .networkDiagnostics: return NSSize(width: 1180, height: 800)
-        case .screenRecorder:     return NSSize(width: 900, height: 560)
-        case .displayBrightness:  return NSSize(width: 900, height: 520)
-        case .dockLock:           return NSSize(width: 900, height: 560)
-        case .menuBarOrganizer:   return NSSize(width: 900, height: 520)
-        default:                  return NSSize(width: 1120, height: 700)
-        }
+        NSSize(width: 1120, height: 740)
     }
 
     static func minimumSize(for module: DashboardWindow.Module) -> NSSize {
-        switch module {
-        case .preferences:        return NSSize(width: 900, height: 540)
-        case .networkDiagnostics: return NSSize(width: 960, height: 620)
-        case .screenRecorder:     return NSSize(width: 760, height: 460)
-        default:                  return NSSize(width: 880, height: 520)
-        }
+        NSSize(width: 960, height: 620)
     }
 }
 
@@ -235,6 +223,32 @@ final class LaunchItemsPageModel: ObservableObject {
         }
     }
 
+    var cleanableProblems: [StartupItem] { problems.filter { $0.repairData != nil } }
+
+    func cleanAllProblems() {
+        guard !busy else { return }
+        let candidates = cleanableProblems
+        guard !candidates.isEmpty else { return }
+        busy = true
+        status = "正在备份并清理异常启动项…"
+        Task {
+            let summary = await Task.detached(priority: .utility) {
+                var cleaned = 0
+                var failures: [String] = []
+                for item in candidates {
+                    do { _ = try StartupItemRepair.quarantine(item); cleaned += 1 }
+                    catch { failures.append(item.label + "：" + error.localizedDescription) }
+                }
+                let refreshed = StartupItemInspector.scan()
+                return (cleaned, failures, refreshed)
+            }.value
+            items = summary.2
+            busy = false
+            status = "已备份并清理 \(summary.0) 项异常启动配置。" + (summary.1.isEmpty ? "" : "失败 \(summary.1.count) 项：" + summary.1.joined(separator: "；"))
+            ModuleBadgeCenter.shared.report(.launchItems, problems.isEmpty ? nil : problems.count)
+        }
+    }
+
     func moveToTrash(_ item: StartupItem) {
         let alert = NSAlert()
         alert.alertStyle = .critical
@@ -268,6 +282,7 @@ final class LaunchItemsPageModel: ObservableObject {
 }
 
 struct LumenLaunchItemsView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = LaunchItemsPageModel()
 
     private static let columns: [ColumnSpec] = [
@@ -278,10 +293,14 @@ struct LumenLaunchItemsView: View {
     ]
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .launchItems,
             subtitle: model.status,
             trailing: {
+                Button(L10n.text("一键清理异常启动项")) { model.cleanAllProblems() }
+                    .lumenButton(.primary, icon: "trash")
+                    .disabled(model.busy || model.cleanableProblems.isEmpty)
                 Button(L10n.text("系统登录项设置")) { model.openLoginItemsSettings() }
                     .lumenButton(.secondary, icon: "gearshape")
                 Button(L10n.text("重新扫描")) { model.scan() }
@@ -342,7 +361,7 @@ struct LumenLaunchItemsView: View {
                     .background(Lumen.Palette.canvas)
 
                     NoticeBar(level: .info,
-                              text: "移走或删除配置不会立即停止正在运行的服务。系统级配置通常需要管理员权限，操作会交由 Finder 处理。")
+                              text: "一键清理会先备份，再移走目标缺失或无法解析的用户启动配置；其他异常需手动检查。移走配置不会立即停止服务。")
                         .padding(.horizontal, Lumen.Metrics.pageInset)
                         .padding(.bottom, Lumen.Metrics.s3)
                 }
@@ -464,9 +483,11 @@ final class LauncherPageModel: ObservableObject {
 }
 
 struct LumenLauncherPage: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = LauncherPageModel()
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .search,
             subtitle: "搜索本机应用、文件与文件夹。输入路径可直接定位。",

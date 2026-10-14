@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 // ============================================================================
 
 struct LumenScreenRecorderView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = ScreenRecorderModel()
     @AppStorage("screenRecorder.quality") private var qualityRawValue = ScreenRecorderQuality.p1080.rawValue
     @AppStorage("screenRecorder.outputDirectory") private var outputDirectoryPath = FileManager.default
@@ -29,6 +30,7 @@ struct LumenScreenRecorderView: View {
     }
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .screenRecorder,
             subtitle: model.status,
@@ -36,6 +38,13 @@ struct LumenScreenRecorderView: View {
             footer: { footer },
             content: { content }
         )
+        .onAppear { model.identifySelectedDisplay() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshDisplays() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in model.refreshDisplays() }
+        .onReceive(NotificationCenter.default.publisher(for: .screenRecorderShortcut)) { _ in
+            if model.isRecording { model.stopRecording() }
+            else { model.startRecording(in: URL(fileURLWithPath: outputDirectoryPath), quality: quality) }
+        }
     }
 
     @ViewBuilder
@@ -48,7 +57,7 @@ struct LumenScreenRecorderView: View {
                 model.startRecording(in: URL(fileURLWithPath: outputDirectoryPath), quality: quality)
             }
             .lumenButton(.primary, icon: "record.circle")
-            .disabled(model.selectedDisplayID == nil || model.displays.isEmpty)
+            .disabled(model.selectedDisplayID == nil || model.displays.isEmpty || model.isStarting)
         }
     }
 
@@ -67,7 +76,8 @@ struct LumenScreenRecorderView: View {
                             }
                             .labelsHidden()
                             .frame(width: 200)
-                            .disabled(model.isRecording || model.displays.isEmpty)
+                            .disabled(model.isRecording || model.isStarting || model.displays.isEmpty)
+                            .onChange(of: model.selectedDisplayID) { _, _ in model.identifySelectedDisplay() }
                         }
 
                         SettingRow("清晰度", detail: "分辨率越高，文件越大") {
@@ -100,7 +110,9 @@ struct LumenScreenRecorderView: View {
                     }
                 }
 
-                if model.outputURL == nil {
+                if !model.hasScreenPermission {
+                    Button(L10n.text("检查录屏权限")) { model.requestScreenPermission() }
+                        .lumenButton(.secondary, icon: "lock")
                     NoticeBar(level: .info, text: "首次录制需要授予「屏幕与系统录音」权限。输出为 MOV 文件，保存在上方目录。")
                 }
             }
@@ -178,90 +190,94 @@ struct LumenScreenRecorderView: View {
 // ============================================================================
 
 struct LumenDisplayBrightnessView: View {
-    @State private var value: Double = 0.7
-    @State private var channelCount = 0
+    @ObservedObject private var localizationState = LumenLanguageState.shared
+    @State private var brightness = 70.0
+    @State private var volume = 50.0
+    @State private var displays: [ExternalDisplayDDC.DisplayTarget] = []
+    @State private var selected = Set<CGDirectDisplayID>()
     @State private var status = ""
-    @State private var applied: String?
+    @State private var applying = false
 
     var body: some View {
-        ModulePage(
-            module: .displayBrightness,
-            subtitle: status.isEmpty ? "向支持 DDC 的外接显示器发送统一亮度值。" : status,
-            trailing: {
-                Button(L10n.text("重新检测")) { rescan() }
-                    .lumenButton(.secondary, icon: "arrow.clockwise")
-            },
-            footer: {
-                PageFooter(
-                    leading: channelCount > 0 ? L10n.format("已发现 %{0} 个可控通道", arguments: [String(channelCount)])
-                                             : "未发现支持 DDC 的外接显示器",
-                    tone: channelCount > 0 ? .active : .caution,
-                    trailing: applied.map { ["上次写入 \($0)"] } ?? []
-                )
-            },
-            content: {
-                ModuleForm(maxWidth: 620) {
-                    VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
-                        LumenPanel("亮度", code: "DDC") {
-                            VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
-                                HStack(spacing: Lumen.Metrics.s3) {
-                                    Image(systemName: "sun.min")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(Lumen.Palette.textFaint)
-                                    Slider(value: $value, in: 0...1) { editing in
-                                        if !editing { apply() }
-                                    }
-                                    .tint(Lumen.Palette.active)
-                                    Image(systemName: "sun.max.fill")
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(Lumen.Palette.textMuted)
-                                    MonoText(text: String(format: "%.0f%%", value * 100), size: 13)
-                                        .frame(width: 52, alignment: .trailing)
-                                }
-
-                                Text(L10n.text("拖动后松开即写入。该功能只发送亮度值，不读取显示器当前亮度。"))
-                                    .font(Lumen.Typo.caption())
-                                    .foregroundStyle(Lumen.Palette.textFaint)
-                            }
-                        }
-
-                        NoticeBar(level: .info,
-                                  text: "支持范围取决于显示器与连接方式。Intel Mac、部分 HDMI 与扩展坞组合不支持 DDC 控制。")
-                    }
-                }
-            }
-        )
+        let _ = localizationState.revision
+        ModulePage(module: .displayBrightness,
+                   subtitle: status.isEmpty ? "选择外接显示器后调整亮度或音量。" : status,
+                   trailing: {
+                       Button(L10n.text("重新检测")) { rescan() }
+                           .lumenButton(.secondary, icon: "arrow.clockwise").disabled(applying)
+                   },
+                   footer: {
+                       PageFooter(leading: status, tone: .active,
+                                  trailing: [L10n.format("已选择 %{0} / %{1} 块显示器", arguments: [String(selected.count), String(displays.count)])])
+                   },
+                   content: {
+                       ModuleForm(maxWidth: 620) {
+                           VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
+                               LumenPanel("显示器", code: "DISPLAY") {
+                                   VStack(alignment: .leading, spacing: 10) {
+                                       Toggle(L10n.text("全选"), isOn: Binding(
+                                           get: { !displays.isEmpty && selected == Set(displays.map(\.id)) },
+                                           set: { selected = $0 ? Set(displays.map(\.id)) : [] }
+                                       )).toggleStyle(.checkbox).disabled(applying || displays.isEmpty)
+                                       ForEach(displays) { display in
+                                           Toggle(isOn: Binding(
+                                               get: { selected.contains(display.id) },
+                                               set: { enabled in
+                                                   if enabled { selected.insert(display.id); DisplaySelectionIndicator.flash(display.id) }
+                                                   else { selected.remove(display.id) }
+                                               }
+                                           )) {
+                                               Label(display.name + " · " + String(display.id), systemImage: "display")
+                                           }.toggleStyle(.checkbox).disabled(applying)
+                                       }
+                                       if displays.isEmpty { Text(L10n.text("未发现外接显示器。")) }
+                                   }
+                               }
+                               LumenPanel("亮度", code: "DDC / 10") {
+                                   control($brightness, symbol: "sun.max.fill", code: 0x10)
+                               }
+                               LumenPanel("显示器音量", code: "DDC / 62") {
+                                   control($volume, symbol: "speaker.wave.2.fill", code: 0x62)
+                               }
+                               NoticeBar(level: .info, text: "松开滑块后只控制所选显示器。显示器需支持并启用 DDC/CI；音量需要显示器支持扬声器音量命令。无法确认控制通道时会报告失败。")
+                           }
+                       }
+                   })
         .onAppear { rescan() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in rescan() }
+    }
+
+    private func control(_ value: Binding<Double>, symbol: String, code: UInt8) -> some View {
+        HStack(spacing: Lumen.Metrics.s3) {
+            Image(systemName: symbol).foregroundStyle(Lumen.Palette.textMuted)
+            Slider(value: value, in: 0...100, step: 1) { editing in
+                if !editing { apply(code, percent: Int(value.wrappedValue)) }
+            }.tint(Lumen.Palette.active).disabled(selected.isEmpty || applying)
+            MonoText(text: "\(Int(value.wrappedValue))%", size: 13).frame(width: 52, alignment: .trailing)
+        }
     }
 
     private func rescan() {
-        guard let count = ExternalDisplayDDC.availableChannelCount() else {
-            channelCount = 0
-            status = "当前设备不支持 DDC 亮度控制。"
-            return
-        }
-        channelCount = count
-        status = count > 0
-            ? L10n.format("已发现 %{0} 个可控通道", arguments: [String(count)])
-            : "未发现支持 DDC 的外接显示器。"
+        let previous = displays
+        displays = ExternalDisplayDDC.connectedDisplays().filter { !$0.builtIn }
+        selected.formIntersection(Set(displays.map(\.id)))
+        if previous.isEmpty && selected.isEmpty, let first = displays.first { selected.insert(first.id) }
+        status = displays.isEmpty ? "未发现外接显示器。" : "请选择要控制的显示器。"
     }
 
-    private func apply() {
-        let percent = Int((value * 100).rounded())
-        applied = "\(percent)%"
-        guard let result = ExternalDisplayDDC.setBrightness(percent) else {
-            status = "当前设备不支持 DDC 亮度控制。"
-            return
-        }
-        if result.sent > 0, result.failed == 0 {
-            status = L10n.format("已向 %{0} 个通道写入亮度。", arguments: [String(result.sent)])
-        } else if result.sent > 0 {
-            status = L10n.format("已写入 %{0} 个通道，%{1} 个失败。",
-                                 arguments: [String(result.sent), String(result.failed)])
-        } else if result.failed > 0 {
-            status = L10n.format("%{0} 个通道写入失败；显示器可能未启用 DDC/CI。", arguments: [String(result.failed)])
-        } else {
-            status = "未发现可写入的外接显示器。"
+    private func apply(_ code: UInt8, percent: Int) {
+        guard !selected.isEmpty, !applying else { return }
+        let targets = selected
+        applying = true
+        status = "正在发送显示器控制命令…"
+        Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) {
+                ExternalDisplayDDC.setControl(code, percent: percent, displayIDs: targets)
+            }.value
+            applying = false
+            guard let result else { status = "当前设备不支持 DDC 控制。"; return }
+            status = "已向 \(result.sent) 块显示器发送命令，\(result.failed) 块失败。"
+            if result.failed > 0 { status += "请检查 DDC/CI、连接方式及显示器支持情况。" }
         }
     }
 }
@@ -271,6 +287,7 @@ struct LumenDisplayBrightnessView: View {
 // ============================================================================
 
 struct LumenDockLockView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @State private var enabled = DashboardWindow.dockLockEnabled
     @State private var target = DashboardWindow.dockLockTargetSetting
     @State private var edgeMargin = AppSettings.shared.edgeMargin
@@ -280,6 +297,7 @@ struct LumenDockLockView: View {
     @State private var accessibilityTrusted = AXIsProcessTrusted()
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .dockLock,
             subtitle: enabled ? "正在把程序坞锁定到目标显示器。" : "程序坞锁定已关闭。",
@@ -495,10 +513,12 @@ private struct DisplayPrivacyTile: View {
 // ============================================================================
 
 struct LumenMenuBarOrganizerView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @ObservedObject private var organizer = MenuBarOrganizer.shared
     @AppStorage(MenuBarOrganizer.autoHideKey) private var autoHide = true
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .menuBarOrganizer,
             subtitle: organizer.enabled ? "不常用的菜单栏图标已折叠到箭头左侧。" : "菜单栏收纳已关闭。",

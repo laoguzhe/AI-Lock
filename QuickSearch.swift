@@ -130,7 +130,7 @@ final class QuickSearch {
         let home = FileManager.default.homeDirectoryForCurrentUser
         // These four nearby roots are the only direct-scan supplement. Spotlight
         // handles the rest of the local computer without walking it on each query.
-        self.directoryRoots = directoryRoots ?? ["Documents/项目", "Documents", "Desktop", "Downloads"]
+        self.directoryRoots = directoryRoots ?? ["Documents/项目", "Documents", "Desktop", "Downloads", "."]
             .map { home.appendingPathComponent($0, isDirectory: true) }
         observers.append(NotificationCenter.default.addObserver(forName: SearchNameCatalog.didUpdate, object: SearchNameCatalog.shared, queue: .main) { [weak self] _ in
             guard let self, self.usesNameCatalog, self.activeCompletion != nil, !self.requiresFullDiskAccess else { return }
@@ -308,7 +308,7 @@ final class QuickSearch {
                     matches.append((SearchResult.item(at: root), score)); publish()
                 }
                 guard let children = try? FileManager.default.contentsOfDirectory(at: root,
-                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: [.skipsHiddenFiles]) else { continue }
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: []) else { continue }
                 for url in children {
                     guard !cancellation.isCancelled else { return }
                     guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]) else { continue }
@@ -482,7 +482,7 @@ private final class SearchNameCatalog {
                 add(root, directory: true)
                 guard depth < 4, !skipped.contains(root.lastPathComponent),
                       let children = try? FileManager.default.contentsOfDirectory(at: root,
-                        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: [.skipsHiddenFiles]) else { continue }
+                        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey], options: []) else { continue }
                 for child in children {
                     guard records.count < 40_000 else { break }
                     guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]) else { continue }

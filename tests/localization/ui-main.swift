@@ -62,7 +62,7 @@ for english in [true, false, true] {
     quickActions.window!.contentView!.layoutSubtreeIfNeeded()
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     precondition(quickActions.window!.title == L10n.text("快捷操作"))
-    precondition(quickSearch.placeholderString == L10n.text("搜索"))
+    precondition(quickSearch.placeholderString == L10n.text("搜应用/文件 · >命令在终端运行 · 网址在浏览器打开"))
     let quickLabels = accessibleStrings(quickActions.window!.contentView!)
     if english { precondition(quickLabels.allSatisfy { $0.range(of: #"[\u4e00-\u9fff]"#, options: .regularExpression) == nil }, "Chinese quick action UI: \(quickLabels)") }
     let textRecord = ClipboardRecord(sourceBundleID: "localization.fixture", items: [[NSPasteboard.PasteboardType.string.rawValue: Data("设置".utf8)]])
@@ -84,6 +84,7 @@ for english in [true, false, true] {
         let labels = accessibleStrings(window.contentView!)
         let chinese = labels.filter { $0.range(of: #"[\u4e00-\u9fff]"#, options: .regularExpression) != nil }
         if english && modules[index] != .logs && modules[index] != .preferences && modules[index] != .launchItems && modules[index] != .uninstaller && modules[index] != .cacheCleaner {
+            if !chinese.isEmpty { try save(window, name: "debug-" + modules[index].rawValue) }
             precondition(chinese.isEmpty, "Chinese UI in \(modules[index]): \(chinese)")
         }
         if english && [.files, .processes, .network].contains(modules[index]) { try save(window, name: modules[index].rawValue) }

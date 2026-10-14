@@ -1,0 +1,2 @@
+"NSSystemExtensionUsageDescription" = "AI Lock 在您启用后提供所选目录的文件操作审计和连接过滤。";
+"NSAppleEventsUsageDescription" = "AI Lock 在启动项删除遇到系统权限限制时，请求 Finder 将您确认的启动项移入废纸篓。";

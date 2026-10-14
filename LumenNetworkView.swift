@@ -91,6 +91,7 @@ final class NetworkActivityPage: ObservableObject {
 // ============================================================================
 
 struct LumenNetworkView: View {
+    @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model: NetworkActivityModel
     @StateObject private var page: NetworkActivityPage
 
@@ -114,6 +115,7 @@ struct LumenNetworkView: View {
     ]
 
     var body: some View {
+        let _ = localizationState.revision
         ModulePage(
             module: .network,
             subtitle: subtitle,

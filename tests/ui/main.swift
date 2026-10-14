@@ -15,6 +15,57 @@ languageDefaults.set(false, forKey: "overview.followSystemLanguage")
 languageDefaults.set(false, forKey: "overview.language")
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "feature-fixes" {
+    try MainActor.assumeIsolated {
+        let controller = DashboardWindow.open(.displayBrightness)
+        let original = controller.window!
+        let screen = NSScreen.screens.last!
+        original.setFrame(NSRect(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40,
+                                 width: 1120, height: 740), display: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        let expected = original.frame
+        for module in [DashboardWindow.Module.screenRecorder, .settings, .launchItems, .networkDiagnostics, .displayBrightness] {
+            let next = DashboardWindow.open(module).window!
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            precondition(next.frame == expected, "Module switching must preserve location and size: " + module.rawValue + " expected \(expected) got \(next.frame)")
+        }
+        print("PASS: module switching preserves the exact frame on the selected monitor")
+        DashboardWindow.hideFunctionalWindows()
+
+        let model = NetworkDiagnosticsModel()
+        let host = NSHostingView(rootView: NetworkDiagnosticsView(model: model))
+        let diagnosticWindow = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 960, height: 700),
+                                        styleMask: [.titled], backing: .buffered, defer: false)
+        diagnosticWindow.contentView = host
+        diagnosticWindow.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        host.layoutSubtreeIfNeeded()
+        if let preview = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: preview)
+            try preview.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/ailock-diagnostic-before.png"))
+        }
+        var initial = NetworkDiagnosticPlan(kind: .local)
+        initial.target = "example.com"
+        model.start([initial])
+        precondition(model.running && model.jobTotal > 0, "Starting must publish running state immediately")
+        model.cancel()
+        precondition(!model.running, "Cancelling must restore idle state immediately")
+        var local = NetworkDiagnosticPlan(kind: .local)
+        local.target = "example.com"
+        model.start([local])
+        let deadline = Date().addingTimeInterval(8)
+        while model.running && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        precondition(!model.running && model.results.count == 1 && model.resultKinds[model.results[0].id] == .local,
+                     "Cancelled run must not overwrite results or completion of the next run")
+        host.layoutSubtreeIfNeeded()
+        if let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: image)
+            try image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
+        }
+        print("PASS: diagnostic model starts jobs, cancellation restores state, and a new local diagnostic completes")
+        exit(0)
+    }
+}
 if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "launcher-search" {
     let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("ailock-launcher-" + UUID().uuidString)
     let folder = fixture.appendingPathComponent("juece")

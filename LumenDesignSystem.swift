@@ -299,6 +299,7 @@ enum LumenButtonKind {
 }
 
 struct LumenButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var kind: LumenButtonKind = .secondary
     var icon: String?
     var compact = false
@@ -324,6 +325,7 @@ struct LumenButtonStyle: ButtonStyle {
     }
 
     private var foreground: Color {
+        if !isEnabled { return Lumen.Palette.textFaint }
         switch kind {
         case .primary:   return .white
         case .secondary: return Lumen.Palette.text
@@ -333,6 +335,7 @@ struct LumenButtonStyle: ButtonStyle {
     }
 
     private var background: Color {
+        if !isEnabled { return Lumen.Palette.fill }
         switch kind {
         case .primary:   return Lumen.Palette.active
         case .secondary: return Lumen.Palette.raised
@@ -342,6 +345,7 @@ struct LumenButtonStyle: ButtonStyle {
     }
 
     private var border: Color {
+        if !isEnabled { return Lumen.Palette.hairline }
         switch kind {
         case .primary:   return .clear
         case .secondary: return Lumen.Palette.hairlineHard
