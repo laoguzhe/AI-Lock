@@ -35,11 +35,11 @@ The overview brings CPU, memory, disk, and network status together with the modu
 - **Startup item inspection:** Review LaunchAgents, LaunchDaemons, and other startup configuration for issues such as a missing Label or a missing or non-executable program. A current-user LaunchAgent that cannot be parsed or is otherwise invalid can be backed up before removal. System-level items must be handled through the owning app or an administrator. Removing a configuration does not necessarily stop a service that is already running.
 - **App logs:** View AI Lock's own macOS Unified Logging records. This is not a system-wide log viewer.
 
-| System health | Process manager |
+| Process manager | App uninstaller |
 | --- | --- |
-| ![System health module](screenshots/system-health.png) | ![Process manager module](screenshots/processes.png) |
-| App uninstaller | Startup items |
-| ![App uninstaller module](screenshots/uninstaller.png) | ![Startup item inspection module](screenshots/startup-items.png) |
+| ![Process manager module](screenshots/processes.png) | ![App uninstaller module](screenshots/uninstaller.png) |
+| Startup items |  |
+| ![Startup item inspection module](screenshots/startup-items.png) |  |
 | App logs |  |
 | ![Application log module](screenshots/logs.png) |  |
 
@@ -86,10 +86,6 @@ If no content appears, click Check Clipboard Access to retry and allow access wh
 - **Clipboard history:** Collection starts the first time the module is opened. Pause or resume collection, exclude selected apps, restore multiple copied items, add notes, search, and export or restore an encrypted backup.
 - History is stored in a local SQLite database with per-record AES-GCM encryption and a key managed by Keychain. Retention is configurable from 1 to 30 days, with a maximum of 500 items or 64 MiB. A single copied item is limited to 8 MiB. Clipboard history is not uploaded by default.
 - The app filters some common confidential/transient flags, but cannot identify every password or sensitive item and may not always identify the source app correctly. Set a retention period, exclude apps, or pause collection in Settings.
-
-![Clipboard history view with no matching search results](screenshots/clipboard-history.png)
-
-The screenshot does not display clipboard record contents.
 
 ### Screen, displays, and menu bar
 

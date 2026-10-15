@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SQLite3
+import CryptoKit
 
 enum AgentHookProvider: String, CaseIterable, Identifiable, Hashable {
     case claude = "Claude Code"
@@ -435,7 +436,12 @@ private struct AgentHookInput {
         else { outcome = "执行中" }
         let explicitCallID = text("tool_use_id", "tool_call_id", "call_id", "toolCallID", "callID", "id")
         if !explicitCallID.isEmpty { callID = explicitCallID }
-        else if !executionID.isEmpty { callID = [executionID, tool, path, command].joined(separator: "|") }
+        else if !executionID.isEmpty {
+            let correlationData = Data([executionID, tool, path, command].joined(separator: "|").utf8)
+            let digest = SHA256.hash(data: correlationData)
+            let fingerprint = digest.map { String(format: "%02x", $0) }.joined()
+            callID = "exec-\(fingerprint)"
+        }
         else { callID = "" }
         duration = String(describing: object["duration"] ?? object["duration_ms"] ?? "")
     }
@@ -499,12 +505,12 @@ enum AgentHookRuntime {
     private static func redact(_ value: String) -> String {
         var result = String(value.prefix(2000))
         let patterns = [
-            "(?i)(sk-[A-Za-z0-9_-]{12,})",
-            "(?i)(gh[pousr]_[A-Za-z0-9_]{12,})",
-            "(?i)(AKIA[0-9A-Z]{16})",
-            "(?i)(authorization\\s*[:=]\\s*(?:bearer\\s+)?)[^\\s,;]+",
-            "(?i)(bearer\\s+)[A-Za-z0-9._~+/-]{8,}",
-            "(?i)(password|token|secret|api[_-]?key)\\s*[:=]\\s*[^\\s;]+"
+            #"(?i)(sk-[A-Za-z0-9_-]{12,})"#,
+            #"(?i)(gh[pousr]_[A-Za-z0-9_]{12,})"#,
+            #"(?i)(AKIA[0-9A-Z]{16})"#,
+            #"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+"#,
+            #"(?i)(bearer\s+)[A-Za-z0-9._~+/-]{8,}"#,
+            #"(?i)(password|token|secret|api[_-]?key)\s*[:=]\s*[^\s;]+"#
         ]
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }

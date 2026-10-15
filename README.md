@@ -34,11 +34,11 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 - **启动项检查**：查看 LaunchAgents、LaunchDaemons 等启动配置及异常线索，包括缺少有效 Label、启动程序缺失或不可执行。对无法解析或异常的当前用户 LaunchAgent，可先备份再移走；系统级项目需通过所属应用或管理员处理。移走配置不等于立即停止正在运行的服务。
 - **应用日志**：查看 AI Lock 自身的 macOS Unified Logging 记录，不读取全系统日志。
 
-| 系统健康 | 进程管理 |
+| 进程管理 | 应用卸载 |
 | --- | --- |
-| ![系统健康检查模块](screenshots/system-health.png) | ![进程管理模块](screenshots/processes.png) |
-| 应用卸载 | 启动项检查 |
-| ![应用卸载模块](screenshots/uninstaller.png) | ![启动项检查模块](screenshots/startup-items.png) |
+| ![进程管理模块](screenshots/processes.png) | ![应用卸载模块](screenshots/uninstaller.png) |
+| 启动项检查 |  |
+| ![启动项检查模块](screenshots/startup-items.png) |  |
 | 应用日志 |  |
 | ![应用日志模块](screenshots/logs.png) |  |
 
@@ -85,10 +85,6 @@ AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，�
 - **剪贴板历史**：首次打开模块后开始采集，可暂停、排除指定应用或恢复采集；支持多对象粘贴还原、备注、搜索和加密备份/恢复。
 - 历史使用 Keychain 管理密钥、逐记录 AES-GCM 加密并保存在本机 SQLite；默认保留 1–30 天，最多 500 条或 64 MiB，单次复制上限 8 MiB。历史默认不会上传。
 - 应用会过滤部分常见 confidential/transient 标志，但不能保证识别所有密码或敏感内容，也不能总是准确判断剪贴板内容的来源应用。请在设置中配置保留时长、排除应用或暂停采集。
-
-![剪贴板历史页面，筛选结果为空](screenshots/clipboard-history.png)
-
-截图没有展示剪贴板记录内容。
 
 ### 屏幕、显示器与菜单栏
 

@@ -17,3 +17,19 @@ build/
 core
 core.*
 /.kilo/
+
+# Local credentials, signing material, and environment-specific secrets
+.env
+.env.*
+!.env.example
+.netrc
+.npmrc
+.pypirc
+*.pem
+*.p12
+*.pfx
+*.key
+*.mobileprovision
+*.provisionprofile
+credentials.json
+secrets.*

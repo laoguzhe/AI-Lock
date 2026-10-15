@@ -47,6 +47,12 @@ run_step "检查 GitHub 登录状态" gh auth status --hostname github.com
 BRANCH="$(git branch --show-current)"
 [[ -n "$BRANCH" ]] || { echo "Run this script from a named branch." >&2; exit 1; }
 log "✓ 当前 Git 分支：$BRANCH"
+if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+	echo "Refusing to publish with a dirty working tree. Commit intended source changes first; untracked files must not enter a release." >&2
+	git status --short >&2
+	exit 1
+fi
+log "✓ 工作区干净，未提交文件不会进入发布"
 log "▶ 检查 GitHub 仓库发布条件"
 REMOTE_INFO="$(gh repo view --json isPrivate,defaultBranchRef,nameWithOwner --jq '[.isPrivate, .defaultBranchRef.name, .nameWithOwner] | @tsv')"
 IFS=$'\t' read -r IS_PRIVATE DEFAULT_BRANCH REPOSITORY <<<"$REMOTE_INFO"
@@ -100,8 +106,7 @@ printf '%s\n' "$VERSION" > VERSION
 printf '%s\n' "$BUILD_NUM" > BUILD_NUM
 log "✓ VERSION=${VERSION}，BUILD_NUM=${BUILD_NUM}"
 
-# Build outputs are ignored; source, cleanup, release scripts and version files are committed together.
-run_step "暂存发布所需源码、文档和版本文件" git add -A -- .
+run_step "仅暂存版本号文件" git add -- VERSION BUILD_NUM
 if ! git diff --cached --quiet; then
 	run_step "创建发布提交" git commit -m "Release $TAG"
 	log "✓ 发布提交已创建"
