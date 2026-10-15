@@ -2,6 +2,60 @@ import AppKit
 import Carbon
 import Darwin
 
+/// Resolve application artwork before asking Finder for a generic executable icon.
+enum ApplicationArtwork {
+    private static let cache = NSCache<NSString, NSImage>()
+
+    static func applicationURL(for path: String) -> URL? {
+        guard path.hasPrefix("/") else { return nil }
+        var url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        while url.path != "/" {
+            if url.pathExtension.lowercased() == "app", FileManager.default.fileExists(atPath: url.path) { return url }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    private static func image(at url: URL) -> NSImage {
+        let key = url.path as NSString
+        if let image = cache.object(forKey: key) { return image }
+        let image = NSWorkspace.shared.icon(forFile: url.path)
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    static func process(pid: pid_t, path: String) -> NSImage? {
+        if let url = applicationURL(for: path) { return image(at: url) }
+        if let app = NSRunningApplication(processIdentifier: pid), let icon = app.icon { return icon }
+        var ancestor = pid
+        var visited = Set<pid_t>()
+        for _ in 0..<16 {
+            guard ancestor > 1, visited.insert(ancestor).inserted else { break }
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(ancestor, PROC_PIDTBSDINFO, 0, &info, size) == size else { break }
+            ancestor = pid_t(info.pbi_ppid)
+            guard ancestor > 1 else { break }
+            if let app = NSRunningApplication(processIdentifier: ancestor), let icon = app.icon { return icon }
+            var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            if proc_pidpath(ancestor, &buffer, UInt32(buffer.count)) > 0,
+               let url = applicationURL(for: String(cString: buffer)) { return image(at: url) }
+        }
+        return nil
+    }
+
+    static func startup(program: String, label: String) -> NSImage? {
+        if let url = applicationURL(for: program) { return image(at: url) }
+        // Launch labels often append a helper or service suffix to the app bundle ID.
+        var identifier = label
+        while identifier.contains(".") {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) { return image(at: url) }
+            identifier = identifier.split(separator: ".").dropLast().joined(separator: ".")
+        }
+        return nil
+    }
+}
+
 enum ApplicationLocations {
     static var searchableRoots: [URL] {
         let manager = FileManager.default

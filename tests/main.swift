@@ -137,6 +137,9 @@ history.exclude(bundleID: "excluded.fixture")
 let huge = NSPasteboardItem(); huge.setData(Data(repeating: 1, count: ClipboardHistory.maximumRecordBytes + 1), forType: .png)
 history.capture([huge], sourceBundleID: "test.fixture")
 expect(history.records.count == 1, "oversized copy is rejected in its entirety")
+expect(history.oversizedContentSkipped, "oversized copy exposes a visible size-limit warning")
+history.capture([second], sourceBundleID: "test.fixture")
+expect(!history.oversizedContentSkipped, "next supported copy clears the size-limit warning")
 
 struct LegacyRecord: Codable {
     let id: UUID; let capturedAt: Date; let sourceBundleID: String; let types: [String]; let values: [String: Data]

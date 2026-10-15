@@ -13,6 +13,19 @@ private func ailockCommandTapCallback(_ proxy: CGEventTapProxy, _ type: CGEventT
     return Unmanaged.passUnretained(event)
 }
 
+private func ailockRecorderHotkeyCallback(_ next: EventHandlerCallRef?, _ event: EventRef?, _ context: UnsafeMutableRawPointer?) -> OSStatus {
+    guard let event else { return OSStatus(eventNotHandledErr) }
+    var hotkey = EventHotKeyID()
+    let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                                   MemoryLayout<EventHotKeyID>.size, nil, &hotkey)
+    guard status == noErr, hotkey.signature == 0x41494C52, hotkey.id == 1 else {
+        return OSStatus(eventNotHandledErr)
+    }
+    let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
+    DispatchQueue.main.async { DashboardWindow.receiveRecorderHotkey(isPressed: pressed) }
+    return noErr
+}
+
 final class DashboardWindow: NSWindowController, NSWindowDelegate {
     static var preferredColorScheme: ColorScheme? {
         switch AppSettings.shared.appearance.rawValue {
@@ -86,6 +99,8 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
     private var moduleRoot: NSView?
     private var moduleHostingViews: [Module: NSHostingView<LumenModuleContent>] = [:]
+    /// Edge constraints per cached page; only the visible page's constraints are active.
+    private var moduleConstraints: [Module: [NSLayoutConstraint]] = [:]
 
     init(module: Module? = nil, window suppliedWindow: NSWindow? = nil, registerServices: Bool = true, clipboardHistory suppliedClipboardHistory: ClipboardHistory? = nil) {
         injectedClipboardHistory = suppliedClipboardHistory
@@ -180,7 +195,11 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     }
 
     private func installModuleContent(_ module: Module, in container: NSView) {
-        let hosting = moduleHostingViews[module] ?? {
+        // Pages stay attached and are only hidden or shown. Detaching and re-attaching a hosting view
+        // re-renders the whole page from blank on every sidebar click, which reads as the window
+        // closing and reopening. Hidden pages are paused through the suspend/resume notifications,
+        // and their edge constraints are released so resizing does not lay out pages nobody can see.
+        if moduleHostingViews[module] == nil {
             let root = LumenModuleContent(module: module, clipboardHistory: clipboardHistory) { [weak self] next in
                 guard next != self?.module else { return }
                 _ = Self.open(next)
@@ -188,23 +207,31 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             let hosting = NSHostingView(rootView: root)
             // The shared shell owns window geometry; page ideal sizes must not resize it.
             hosting.sizingOptions = []
+            hosting.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(hosting)
+            moduleConstraints[module] = [
+                hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                hosting.topAnchor.constraint(equalTo: container.topAnchor),
+                hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ]
             moduleHostingViews[module] = hosting
-            return hosting
-        }()
-        container.subviews.forEach { $0.removeFromSuperview() }
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: container.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
+        }
+        for (key, hosting) in moduleHostingViews where key != module {
+            hosting.isHidden = true
+            NSLayoutConstraint.deactivate(moduleConstraints[key] ?? [])
+        }
+        if let hosting = moduleHostingViews[module] {
+            hosting.isHidden = false
+            NSLayoutConstraint.activate(moduleConstraints[module] ?? [])
+        }
     }
 
     private func switchModule(to next: Module) {
         guard next != module, let window, let moduleRoot else { return }
         suspendPageSampling()
+        // Drop focus from the page being hidden so keystrokes don't land in an invisible view.
+        window.makeFirstResponder(nil)
         module = next
         window.title = L10n.text(next == .logs ? "AI Lock 应用日志" : next.rawValue)
         window.backgroundColor = next == .networkDiagnostics ? DiagnosticConsole.backgroundColor : canvas
@@ -258,6 +285,10 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     private weak var activeModuleWindow: NSWindow?
     private static var commandDetector = CommandDoubleTapDetector()
     private static var launcherWindow: QuickActionWindowController?
+    private static var recorderHotkey: EventHotKeyRef?
+    private static var recorderHotkeyHandler: EventHandlerRef?
+    private static var recorderHotkeyHeld = false
+    private static let recorderDefaultModifiers = 1 | 4 | 8 // Command + Control + Shift
     private static var commandEventTap: CFMachPort?
     private static var commandEventTapSource: CFRunLoopSource?
     private static var commandLocalMonitor: Any?
@@ -280,7 +311,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     static var screenRecorderShortcutTitle: String {
         let defaults = UserDefaults.standard
         let modifiers = defaults.object(forKey: screenRecorderShortcutModifiersKey) == nil
-            ? (1 | 8)
+            ? recorderDefaultModifiers
             : defaults.integer(forKey: screenRecorderShortcutModifiersKey)
         let keyCode = defaults.object(forKey: screenRecorderShortcutKeyCodeKey) == nil
             ? Int(kVK_ANSI_R)
@@ -304,6 +335,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         UserDefaults.standard.removeObject(forKey: screenRecorderShortcutEnabledKey)
         UserDefaults.standard.removeObject(forKey: screenRecorderShortcutKeyCodeKey)
         UserDefaults.standard.removeObject(forKey: screenRecorderShortcutModifiersKey)
+        _ = refreshGlobalHotkeys()
     }
 
     static var hasCustomQuickActionShortcut: Bool {
@@ -392,15 +424,46 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
             && modifiers == UserDefaults.standard.integer(forKey: quickActionShortcutModifiersKey)
     }
 
-    private static func matchesScreenRecorderShortcut(keyCode: Int64, modifiers: Int) -> Bool {
+    static func receiveRecorderHotkey(isPressed: Bool) {
+        guard isPressed else { recorderHotkeyHeld = false; return }
+        guard !recorderHotkeyHeld else { return }
+        recorderHotkeyHeld = true
+        commandDetector.reset()
+        ScreenRecorderModel.shared.toggleRecording()
+    }
+
+    private static func registerRecorderHotkey() {
+        if let recorderHotkey { UnregisterEventHotKey(recorderHotkey) }
+        recorderHotkey = nil
+        recorderHotkeyHeld = false
+        if recorderHotkeyHandler == nil {
+            var events = [
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+            ]
+            let status = InstallEventHandler(GetApplicationEventTarget(), ailockRecorderHotkeyCallback,
+                                            events.count, &events, nil, &recorderHotkeyHandler)
+            guard status == noErr else {
+                hotkeyRegistrationErrors.append(L10n.text("录屏快捷键监听注册失败。"))
+                return
+            }
+        }
         let defaults = UserDefaults.standard
-        let expectedKeyCode = defaults.object(forKey: screenRecorderShortcutKeyCodeKey) == nil
-            ? Int64(kVK_ANSI_R)
-            : Int64(defaults.integer(forKey: screenRecorderShortcutKeyCodeKey))
-        let expectedModifiers = defaults.object(forKey: screenRecorderShortcutModifiersKey) == nil
-            ? (1 | 8)
-            : defaults.integer(forKey: screenRecorderShortcutModifiersKey)
-        return keyCode == expectedKeyCode && modifiers == expectedModifiers
+        let keyCode = defaults.object(forKey: screenRecorderShortcutKeyCodeKey) == nil
+            ? Int(kVK_ANSI_R) : defaults.integer(forKey: screenRecorderShortcutKeyCodeKey)
+        let mask = defaults.object(forKey: screenRecorderShortcutModifiersKey) == nil
+            ? recorderDefaultModifiers : defaults.integer(forKey: screenRecorderShortcutModifiersKey)
+        var modifiers: UInt32 = 0
+        if mask & 1 != 0 { modifiers |= UInt32(cmdKey) }
+        if mask & 2 != 0 { modifiers |= UInt32(optionKey) }
+        if mask & 4 != 0 { modifiers |= UInt32(controlKey) }
+        if mask & 8 != 0 { modifiers |= UInt32(shiftKey) }
+        let status = RegisterEventHotKey(UInt32(clamping: keyCode), modifiers,
+            EventHotKeyID(signature: 0x41494C52, id: 1), GetApplicationEventTarget(),
+            OptionBits(kEventHotKeyExclusive), &recorderHotkey)
+        if status != noErr {
+            hotkeyRegistrationErrors.append(L10n.text("录屏快捷键已被占用，请在设置中更换组合。"))
+        }
     }
 
     private static func triggerCustomQuickActionShortcut() {
@@ -410,6 +473,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     @discardableResult static func refreshGlobalHotkeys() -> [String] {
         hotkeyRegistrationErrors.removeAll()
+        registerRecorderHotkey()
         installCommandEventTap()
         hotkeyRegistrationErrors.forEach { log($0) }
         return hotkeyRegistrationErrors
@@ -422,31 +486,28 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
     private static var hotkeyRegistrationErrors: [String] = []
 
     private static func installCommandEventTap() {
+        // The event tap sees keys for every other app; the local monitor sees keys only while AI Lock is
+        // active. The two are split by activation, so each key press reaches the handlers exactly once.
         if commandLocalMonitor == nil {
             commandLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
-                // Session taps do not reliably deliver events aimed at this application.
-                if commandEventTap == nil {
-                    if event.type == .keyDown, event.keyCode == UInt16(kVK_Escape) {
-                        DisplayPrivacyManager.shared.cancelBlackoutTest()
-                    } else if event.type == .keyDown,
-                       !event.isARepeat,
-                       matchesQuickActionShortcut(keyCode: Int64(event.keyCode), modifiers: eventModifierMask(event.modifierFlags)) {
-                        triggerCustomQuickActionShortcut()
-                    } else if event.type == .keyDown, !event.isARepeat,
-                              matchesScreenRecorderShortcut(keyCode: Int64(event.keyCode), modifiers: eventModifierMask(event.modifierFlags)) {
-                        NotificationCenter.default.post(name: .screenRecorderShortcut, object: nil)
-                    } else if !hasCustomQuickActionShortcut {
-                        let other: NSEvent.ModifierFlags = [.shift, .control, .option]
-                        handleCommandDoubleTap(commandDown: event.modifierFlags.contains(.command),
-                            otherKey: event.type == .keyDown || !event.modifierFlags.intersection(other).isEmpty,
-                            timestamp: event.timestamp)
-                    }
-                }
+                guard NSApp.isActive else { return event }
+                let isKeyDown = event.type == .keyDown
+                let isCommandKey = event.keyCode == UInt16(kVK_Command) || event.keyCode == UInt16(kVK_RightCommand)
+                let otherFlags: NSEvent.ModifierFlags = [.shift, .control, .option]
+                handleInputEvent(isKeyDown: isKeyDown,
+                                 keyCode: Int64(event.keyCode),
+                                 modifiers: eventModifierMask(event.modifierFlags),
+                                 isRepeat: event.isARepeat,
+                                 isCommandKey: isCommandKey,
+                                 commandDown: event.modifierFlags.contains(.command),
+                                 otherKey: isKeyDown || !isCommandKey || !event.modifierFlags.intersection(otherFlags).isEmpty,
+                                 timestamp: event.timestamp)
                 return event
             }
         }
         guard commandEventTap == nil else { return }
         guard CGPreflightListenEventAccess() else {
+            requestInputMonitoringOnce()
             if !hotkeyRegistrationErrors.contains(commandInputMonitoringError) {
                 hotkeyRegistrationErrors.append(commandInputMonitoringError)
                 log(commandInputMonitoringError)
@@ -486,39 +547,67 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
         if let commandEventTap { CGEvent.tapEnable(tap: commandEventTap, enable: true) }
     }
 
+    /// Set once per launch so the Input Monitoring prompt is not requested again on every retry.
+    private static var inputMonitoringRequested = false
+
+    /// Asks macOS for Input Monitoring the first time it is missing. The system shows its prompt only
+    /// while the decision is undetermined, so an earlier denial never produces repeated prompts.
+    private static func requestInputMonitoringOnce() {
+        guard !inputMonitoringRequested else { return }
+        inputMonitoringRequested = true
+        _ = CGRequestListenEventAccess()
+    }
+
+    /// Adds AI Lock to the Input Monitoring list and opens that page of System Settings.
+    static func requestInputMonitoringAccess() {
+        _ = CGRequestListenEventAccess()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    static var hasInputMonitoringAccess: Bool { CGPreflightListenEventAccess() }
+
+    /// True once the global event tap is running, i.e. shortcuts also work while other apps are active.
+    static var globalShortcutsActive: Bool { commandEventTap != nil }
+
+    private static func handleInputEvent(isKeyDown: Bool, keyCode: Int64, modifiers: Int, isRepeat: Bool,
+                                         isCommandKey: Bool, commandDown: Bool, otherKey: Bool, timestamp: TimeInterval) {
+        if isKeyDown, keyCode == Int64(kVK_Escape) {
+            DisplayPrivacyManager.shared.cancelBlackoutTest()
+            return
+        }
+        if isKeyDown, !isRepeat, matchesQuickActionShortcut(keyCode: keyCode, modifiers: modifiers) {
+            triggerCustomQuickActionShortcut()
+            return
+        }
+        guard !hasCustomQuickActionShortcut else {
+            commandDetector.reset()
+            return
+        }
+        if isCommandKey, !isKeyDown, CommandLine.arguments.contains("--diagnose-hotkeys") {
+            log("Command 手势：\(commandDown ? "按下" : "松开")，附加修饰键=\(otherKey)，事件时间=\(timestamp)")
+        }
+        handleCommandDoubleTap(commandDown: commandDown, otherKey: otherKey, timestamp: timestamp)
+    }
+
     static func receiveCommandEvent(type: CGEventType, event: CGEvent) {
         guard type == .flagsChanged || type == .keyDown else { return }
+        // Read everything from the event now; the tap's event object is only reliable inside the callback.
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let commandDown = event.flags.contains(.maskCommand)
+        let isKeyDown = type == .keyDown
         let isCommandKey = keyCode == Int64(kVK_Command) || keyCode == Int64(kVK_RightCommand)
         let otherFlags: CGEventFlags = [.maskShift, .maskControl, .maskAlternate]
-        let otherKey = type == .keyDown || !event.flags.intersection(otherFlags).isEmpty || !isCommandKey
+        let otherKey = isKeyDown || !event.flags.intersection(otherFlags).isEmpty || !isCommandKey
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let modifiers = eventModifierMask(event.flags)
+        let commandDown = event.flags.contains(.maskCommand)
         let timestamp = Double(event.timestamp) / 1_000_000_000
         DispatchQueue.main.async {
-            if type == .keyDown, keyCode == Int64(kVK_Escape) {
-                DisplayPrivacyManager.shared.cancelBlackoutTest()
-                return
-            }
-            if type == .keyDown,
-               event.getIntegerValueField(.keyboardEventAutorepeat) == 0,
-               matchesQuickActionShortcut(keyCode: keyCode, modifiers: eventModifierMask(event.flags)) {
-                triggerCustomQuickActionShortcut()
-                return
-            }
-            if type == .keyDown,
-               event.getIntegerValueField(.keyboardEventAutorepeat) == 0,
-               matchesScreenRecorderShortcut(keyCode: keyCode, modifiers: eventModifierMask(event.flags)) {
-                NotificationCenter.default.post(name: .screenRecorderShortcut, object: nil)
-                return
-            }
-            guard !hasCustomQuickActionShortcut else {
-                commandDetector.reset()
-                return
-            }
-            if type == .flagsChanged && isCommandKey {
-                if CommandLine.arguments.contains("--diagnose-hotkeys") { log("Command 手势：\(commandDown ? "按下" : "松开")，附加修饰键=\(otherKey)，事件时间=\(timestamp)") }
-            }
-            handleCommandDoubleTap(commandDown: commandDown, otherKey: otherKey, timestamp: timestamp)
+            // While AI Lock is active, the local monitor has already seen this event.
+            guard !NSApp.isActive else { return }
+            handleInputEvent(isKeyDown: isKeyDown, keyCode: keyCode, modifiers: modifiers, isRepeat: isRepeat,
+                             isCommandKey: isCommandKey, commandDown: commandDown, otherKey: otherKey, timestamp: timestamp)
         }
     }
 

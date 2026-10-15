@@ -66,6 +66,9 @@ struct LumenFileActivityView: View {
             Text(L10n.text("删除本地事件和核实标记。采集会继续，已导出的文件不会删除。"))
         }
         .onAppear { ModuleBadgeCenter.shared.report(.files, audit.events.count) }
+        .moduleActivity(module: .files,
+                        onResume: { ModuleBadgeCenter.shared.report(.files, audit.events.count) },
+                        onSuspend: {})
     }
 
     private var subtitle: String {

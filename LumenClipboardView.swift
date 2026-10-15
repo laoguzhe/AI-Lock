@@ -60,6 +60,7 @@ final class ClipboardPageModel: ObservableObject {
                 + (history.isLoadingPage ? " · 正在加载…" : "")
         }
         if history.sensitiveContentSkipped { status = "检测到高置信密钥，本条内容已跳过" }
+        if history.oversizedContentSkipped { status = "本条剪贴板内容超过 50 MB，未保存到历史记录（包含所有格式的总大小）。" }
         exclusionList = history.excludedBundleIDs
     }
 
@@ -101,7 +102,9 @@ final class ClipboardPageModel: ObservableObject {
         } else {
             let read = history.readCurrentClipboard()
             refresh()
-            status = read ? "已读取当前剪贴板。" : "未读取到内容：请先复制普通文本，再重试；若系统询问，请允许剪贴板访问。"
+            if !history.oversizedContentSkipped {
+                status = read ? "已读取当前剪贴板。" : "未读取到内容：请先复制普通文本，再重试；若系统询问，请允许剪贴板访问。"
+            }
         }
     }
 
@@ -299,6 +302,10 @@ struct LumenClipboardView: View {
         )
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+        // The page stays mounted when the sidebar switches away, so onDisappear never fires for it.
+        .moduleActivity(module: .clipboard,
+                        onResume: { model.start() },
+                        onSuspend: { model.stop() })
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refresh() }
         .alert(L10n.text("清空本地剪贴板历史？"), isPresented: $model.showClearConfirm) {
             Button(L10n.text("取消"), role: .cancel) {}

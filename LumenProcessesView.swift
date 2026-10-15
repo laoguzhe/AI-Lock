@@ -445,11 +445,13 @@ private struct ProcessRow: View {
     private var networkTotal: Double { process.networkDown + process.networkUp }
 
     var body: some View {
-        GridRow(selected: selected, onTap: onSelect, onDoubleTap: onOpen) {
+        // Selection is drawn below with a stronger tint than the shared GridRow highlight,
+        // so the shared highlight stays off here to avoid stacking two backgrounds.
+        GridRow(selected: false, onTap: onSelect, onDoubleTap: onOpen, fixedHeight: 42) {
             HStack(spacing: 0) {
                 // 进程名 + 图标
                 HStack(spacing: 9) {
-                    AppGlyph(name: process.name, image: icon, size: 20)
+                    AppGlyph(name: process.name, image: icon, size: 30)
                     Text(process.name)
                         .font(Lumen.Typo.dense())
                         .foregroundStyle(Lumen.Palette.text)
@@ -524,6 +526,10 @@ private struct ProcessRow: View {
                 .padding(.horizontal, 10)
             }
         }
+        .background(selected ? Lumen.Palette.active.opacity(0.16) : Color.clear)
+        .overlay(alignment: .leading) {
+            if selected { Rectangle().fill(Lumen.Palette.active).frame(width: 3).allowsHitTesting(false) }
+        }
         .contextMenu {
             Button(L10n.text("在 Finder 中显示")) { onOpen() }
                 .disabled(process.executablePath.isEmpty)
@@ -543,7 +549,6 @@ private struct ProcessRow: View {
     }
 
     private var icon: NSImage? {
-        guard !process.executablePath.isEmpty else { return nil }
-        return NSWorkspace.shared.icon(forFile: process.executablePath)
+        ApplicationArtwork.process(pid: process.pid, path: process.executablePath)
     }
 }

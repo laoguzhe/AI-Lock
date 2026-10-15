@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import ScreenCaptureKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -14,7 +15,12 @@ import UniformTypeIdentifiers
 
 struct LumenScreenRecorderView: View {
     @ObservedObject private var localizationState = LumenLanguageState.shared
-    @StateObject private var model = ScreenRecorderModel()
+    @StateObject private var model = ScreenRecorderModel.shared
+    @State private var previewResult: ScreenRecordingResult?
+    @State private var cleanupTargets: [ScreenRecordingResult] = []
+    @State private var showCleanup = false
+    @State private var cleanupError: String?
+    @State private var showCleanupError = false
     @AppStorage("screenRecorder.quality") private var qualityRawValue = ScreenRecorderQuality.p1080.rawValue
     @AppStorage("screenRecorder.outputDirectory") private var outputDirectoryPath = FileManager.default
         .urls(for: .moviesDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
@@ -38,13 +44,30 @@ struct LumenScreenRecorderView: View {
             footer: { footer },
             content: { content }
         )
+        .sheet(item: $previewResult) { result in
+            RecordingPreview(result: result)
+        }
+        .confirmationDialog(L10n.text("清理录屏历史"), isPresented: $showCleanup, titleVisibility: .visible) {
+            Button(L10n.text("仅清除历史记录")) { clearHistory(includingFiles: false) }
+            Button(L10n.text("清除记录并将文件移到废纸篓"), role: .destructive) { clearHistory(includingFiles: true) }
+            Button(L10n.text("取消"), role: .cancel) { cleanupTargets = [] }
+        } message: {
+            Text(cleanupTargets.count == 1
+                 ? cleanupTargets[0].url.lastPathComponent
+                 : L10n.format("将清理 %{0} 条录屏记录", arguments: [String(cleanupTargets.count)]))
+        }
+        .alert(L10n.text("部分录屏文件未能清理"), isPresented: $showCleanupError) {
+            Button(L10n.text("好"), role: .cancel) {}
+        } message: {
+            Text(cleanupError ?? "")
+        }
         .onAppear { model.identifySelectedDisplay() }
+        // Pages stay mounted when the sidebar switches away, so re-entering the page is a resume, not an appear.
+        .moduleActivity(module: .screenRecorder,
+                        onResume: { Task { @MainActor in model.identifySelectedDisplay() } },
+                        onSuspend: {})
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshDisplays() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in model.refreshDisplays() }
-        .onReceive(NotificationCenter.default.publisher(for: .screenRecorderShortcut)) { _ in
-            if model.isRecording { model.stopRecording() }
-            else { model.startRecording(in: URL(fileURLWithPath: outputDirectoryPath), quality: quality) }
-        }
     }
 
     @ViewBuilder
@@ -52,6 +75,7 @@ struct LumenScreenRecorderView: View {
         if model.isRecording {
             Button(L10n.text("停止录制")) { model.stopRecording() }
                 .lumenButton(.danger, icon: "stop.fill")
+                .disabled(model.isStopping)
         } else {
             Button(L10n.text("开始录制")) {
                 model.startRecording(in: URL(fileURLWithPath: outputDirectoryPath), quality: quality)
@@ -62,88 +86,192 @@ struct LumenScreenRecorderView: View {
     }
 
     private var content: some View {
-        ModuleForm(maxWidth: 620) {
-            VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
-                recordingStatus
-
-                LumenPanel("录制设置", code: "CAPTURE") {
-                    VStack(spacing: 0) {
-                        SettingRow("显示器", detail: model.displays.isEmpty ? "正在读取可录制的显示器…" : "选择要录制的屏幕") {
-                            Picker("", selection: $model.selectedDisplayID) {
-                                ForEach(model.displays) { option in
-                                    Text(option.title).tag(Optional(option.id))
+        HStack(alignment: .top, spacing: Lumen.Metrics.s4) {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
+                    LumenPanel("录制设置", code: "CAPTURE") {
+                        VStack(spacing: 0) {
+                            SettingRow("显示器", detail: model.displays.isEmpty ? "正在读取可录制的显示器…" : "选择要录制的屏幕") {
+                                Picker("", selection: $model.selectedDisplayID) {
+                                    ForEach(model.displays) { option in
+                                        Text(option.title).tag(Optional(option.id))
+                                    }
                                 }
+                                .labelsHidden()
+                                .frame(width: 200)
+                                .disabled(model.isRecording || model.isStarting || model.displays.isEmpty)
+                                .onChange(of: model.selectedDisplayID) { _, _ in model.identifySelectedDisplay() }
                             }
-                            .labelsHidden()
-                            .frame(width: 200)
-                            .disabled(model.isRecording || model.isStarting || model.displays.isEmpty)
-                            .onChange(of: model.selectedDisplayID) { _, _ in model.identifySelectedDisplay() }
-                        }
 
-                        SettingRow("清晰度", detail: "分辨率越高，文件越大") {
-                            Picker("", selection: $qualityRawValue) {
-                                ForEach(ScreenRecorderQuality.allCases) { option in
-                                    Text(option.title).tag(option.rawValue)
+                            SettingRow("清晰度", detail: "支持 2K、4K 和原始分辨率，不超过屏幕实际像素") {
+                                Picker("", selection: $qualityRawValue) {
+                                    ForEach(ScreenRecorderQuality.allCases) { option in
+                                        Text(option.title).tag(option.rawValue)
+                                    }
                                 }
+                                .labelsHidden()
+                                .frame(width: 200)
+                                .disabled(model.isRecording || model.isStarting)
                             }
-                            .labelsHidden()
-                            .frame(width: 200)
-                            .disabled(model.isRecording)
-                        }
 
-                        SettingRow("保存位置", detail: outputDirectoryPath) {
-                            Button(L10n.text("更改…")) { chooseOutputDirectory() }
+                            SettingRow("保存位置", detail: outputDirectoryPath) {
+                                Button(L10n.text("更改…")) { chooseOutputDirectory() }
+                                    .lumenButton(.secondary, compact: true)
+                                    .disabled(model.isRecording)
+                            }
+
+                            SettingRow("录制快捷键", detail: shortcutTitle) {
+                                Button(L10n.text("在设置中修改…")) {
+                                    DashboardWindow.openPreferences(section: "快捷键")
+                                }
                                 .lumenButton(.secondary, compact: true)
-                                .disabled(model.isRecording)
-                        }
-
-                        SettingRow("录制快捷键", detail: shortcutTitle) {
-                            Button(L10n.text("在设置中修改…")) {
-                                DashboardWindow.openPreferences(section: "快捷键")
                             }
-                            .lumenButton(.secondary, compact: true)
-                        }
 
-                        SettingRow("系统声音", detail: "录制时同步捕获系统音频") {
-                            Pill("已启用", tone: .active)
+                            SettingRow("系统声音", detail: "录制时同步捕获系统音频") {
+                                Pill("已启用", tone: .active)
+                            }
                         }
                     }
-                }
 
-                if !model.hasScreenPermission {
-                    Button(L10n.text("检查录屏权限")) { model.requestScreenPermission() }
-                        .lumenButton(.secondary, icon: "lock")
-                    NoticeBar(level: .info, text: "首次录制需要授予「屏幕与系统录音」权限。输出为 MOV 文件，保存在上方目录。")
+                    if !model.history.isEmpty {
+                        LumenPanel("录屏历史", code: "HISTORY", trailing: AnyView(
+                            Button(L10n.text("清理历史")) {
+                                cleanupTargets = model.history
+                                showCleanup = true
+                            }
+                            .lumenButton(.secondary, compact: true)
+                        )) {
+                            VStack(alignment: .leading, spacing: Lumen.Metrics.s3) {
+                                ForEach(model.history) { result in
+                                    historyRow(result)
+                                }
+                            }
+                        }
+                    }
+
+                    if !model.hasScreenPermission {
+                        Button(L10n.text("检查录屏权限")) { model.requestScreenPermission() }
+                            .lumenButton(.secondary, icon: "lock")
+                        NoticeBar(level: .info, text: "首次录制需要授予「屏幕与系统录音」权限。输出为 MOV 文件，保存在上方目录。")
+                    }
+                }
+                .padding(.bottom, Lumen.Metrics.s6)
+            }
+            .frame(width: 420)
+
+            statusCard
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(.horizontal, Lumen.Metrics.pageInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func clearHistory(includingFiles: Bool) {
+        let ids = Set(cleanupTargets.map(\.id))
+        cleanupError = model.clearHistory(ids: ids, includingFiles: includingFiles)
+        cleanupTargets = []
+        showCleanupError = cleanupError != nil
+    }
+
+    private func historyRow(_ result: ScreenRecordingResult) -> some View {
+        let available = result.succeeded && FileManager.default.fileExists(atPath: result.url.path)
+        return HStack(alignment: .top, spacing: 12) {
+            Button { previewResult = result } label: {
+                RecordingHistoryThumbnail(result: result)
+            }
+            .buttonStyle(.plain)
+            .disabled(!available)
+            .accessibilityLabel(L10n.text("预览播放"))
+            .help(L10n.text("预览播放"))
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Button { model.selectResult(result) } label: {
+                        Text(result.url.lastPathComponent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 0)
+                    Button {
+                        cleanupTargets = [result]
+                        showCleanup = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Lumen.Palette.textMuted)
+                    .accessibilityLabel(L10n.text("清除这条记录"))
+                    .help(L10n.text("清除这条记录"))
+                }
+                Text(result.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(Lumen.Typo.caption())
+                    .foregroundStyle(Lumen.Palette.textMuted)
+                Text(result.url.deletingLastPathComponent().path)
+                    .font(Lumen.Typo.caption())
+                    .foregroundStyle(Lumen.Palette.textFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: 6) {
+                    Button(L10n.text("预览播放")) { previewResult = result }
+                        .lumenButton(.secondary, compact: true)
+                        .disabled(!available)
+                    Button(L10n.text("在 Finder 中显示")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([result.url])
+                    }
+                    .lumenButton(.secondary, compact: true)
+                    .disabled(!available)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
+        .hairlineBottom()
+    }
+
+    /// Right-hand panel that fills the page: live timer while recording, the saved file afterwards.
+    @ViewBuilder
+    private var statusCard: some View {
+        if model.isRecording {
+            recordingCard
+        } else if let result = model.lastResult {
+            resultCard(result)
+        } else {
+            idleCard
         }
     }
 
-    private var recordingStatus: some View {
-        HStack(spacing: Lumen.Metrics.s4) {
-            ZStack {
+    private var idleCard: some View {
+        EmptyState(
+            symbol: "record.circle",
+            title: "尚未录制",
+            detail: "选择显示器与清晰度后开始录制，完成后会在这里显示结果。"
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Lumen.Metrics.s5)
+        .lumenPanel()
+    }
+
+    private var recordingCard: some View {
+        VStack(alignment: .leading, spacing: Lumen.Metrics.s4) {
+            HStack(spacing: Lumen.Metrics.s2) {
                 Circle()
-                    .fill(model.isRecording ? Lumen.Palette.dangerWash : Lumen.Palette.fill)
-                    .frame(width: 46, height: 46)
-                Circle()
-                    .fill(model.isRecording ? Lumen.Palette.danger : Lumen.Palette.textGhost)
-                    .frame(width: model.isRecording ? 15 : 12, height: model.isRecording ? 15 : 12)
+                    .fill(Lumen.Palette.danger)
+                    .frame(width: 10, height: 10)
+                Text(L10n.text(model.isStopping ? "正在保存录屏…" : "正在录制"))
+                    .font(Lumen.Typo.heading())
+                    .foregroundStyle(Lumen.Palette.dangerInk)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                if model.isRecording {
-                    Text(L10n.text("正在录制"))
-                        .font(Lumen.Typo.heading())
-                        .foregroundStyle(Lumen.Palette.dangerInk)
-                    MonoText(text: elapsed, size: 20, weight: .light, color: Lumen.Palette.text)
-                } else {
-                    Text(L10n.text("未在录制"))
-                        .font(Lumen.Typo.heading())
-                        .foregroundStyle(Lumen.Palette.textMuted)
-                    Text(L10n.text("选择显示器与清晰度后开始录制。"))
-                        .font(Lumen.Typo.caption())
-                        .foregroundStyle(Lumen.Palette.textFaint)
-                }
+            MonoText(text: elapsed, size: 40, weight: .light, color: Lumen.Palette.text)
+
+            if let output = model.outputURL {
+                Text(output.path)
+                    .font(Lumen.Typo.caption())
+                    .foregroundStyle(Lumen.Palette.textFaint)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
             }
 
             Spacer(minLength: 0)
@@ -152,16 +280,85 @@ struct LumenScreenRecorderView: View {
                 Button(L10n.text("在 Finder 中显示")) {
                     NSWorkspace.shared.activateFileViewerSelecting([output])
                 }
-                .lumenButton(.secondary, compact: true)
+                .lumenButton(.secondary, icon: "folder")
             }
         }
-        .padding(Lumen.Metrics.s4)
+        .padding(Lumen.Metrics.s5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .lumenPanel()
     }
 
+    private func resultCard(_ result: ScreenRecordingResult) -> some View {
+        VStack(alignment: .leading, spacing: Lumen.Metrics.s4) {
+            HStack(alignment: .center, spacing: Lumen.Metrics.s3) {
+                Image(systemName: result.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(result.succeeded ? Lumen.Palette.active : Lumen.Palette.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.text(result.succeeded ? "录制已保存" : "录制未能保存"))
+                        .font(Lumen.Typo.title())
+                        .foregroundStyle(Lumen.Palette.text)
+                    Text(result.url.lastPathComponent)
+                        .font(Lumen.Typo.dense())
+                        .foregroundStyle(Lumen.Palette.textMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            VStack(spacing: 0) {
+                resultRow("时长", value: formatDuration(result.duration))
+                resultRow("清晰度", value: result.qualityTitle)
+                resultRow("文件大小", value: UnitFormat.bytes(UInt64(max(0, result.fileSize))))
+                resultRow("保存位置", value: result.url.deletingLastPathComponent().path)
+                    .textSelection(.enabled)
+            }
+
+            if !result.succeeded {
+                NoticeBar(level: .danger, text: result.message)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: Lumen.Metrics.s2) {
+                Button(L10n.text("预览播放")) { previewResult = result }
+                    .lumenButton(.primary, icon: "play.fill")
+                    .disabled(!result.succeeded || !FileManager.default.fileExists(atPath: result.url.path))
+                Button(L10n.text("在 Finder 中显示")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([result.url])
+                }
+                .lumenButton(.secondary, icon: "folder")
+            }
+        }
+        .padding(Lumen.Metrics.s5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .lumenPanel()
+    }
+
+    private func resultRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Lumen.Metrics.s4) {
+            Text(L10n.text(title))
+                .font(Lumen.Typo.dense())
+                .foregroundStyle(Lumen.Palette.textFaint)
+            Spacer(minLength: Lumen.Metrics.s4)
+            Text(value)
+                .font(Lumen.Typo.dense())
+                .foregroundStyle(Lumen.Palette.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .hairlineBottom()
+    }
+
+
     private var elapsed: String {
-        let seconds = model.elapsedSeconds
-        return String(format: "%02d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
+        formatDuration(model.elapsedSeconds)
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        String(format: "%02d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
     }
 
     private var footer: some View {
@@ -182,6 +379,87 @@ struct LumenScreenRecorderView: View {
         panel.directoryURL = URL(fileURLWithPath: outputDirectoryPath)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         outputDirectoryPath = url.path
+    }
+}
+
+private struct RecordingHistoryThumbnail: View {
+    let result: ScreenRecordingResult
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.08)
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: result.succeeded ? "film" : "exclamationmark.triangle")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Lumen.Palette.textFaint)
+            }
+            if thumbnail != nil {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.55), radius: 3)
+            }
+        }
+        .frame(width: 104, height: 68)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .task(id: result.url) {
+            guard result.succeeded else { return }
+            thumbnail = await RecordingThumbnail.firstFrame(at: result.url)
+        }
+    }
+}
+
+/// Use AppKit's player directly, avoiding the system SwiftUI VideoPlayer bridge.
+private struct RecordingPlayerView: NSViewRepresentable {
+    let player: AVPlayer?
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+}
+
+private struct RecordingPreview: View {
+    let result: ScreenRecordingResult
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(result.url.lastPathComponent).font(.headline)
+                Spacer()
+                Button(L10n.text("关闭")) { dismiss() }
+            }
+            RecordingPlayerView(player: player)
+                .frame(minWidth: 720, minHeight: 405)
+            Text(result.url.path)
+                .font(.caption)
+                .textSelection(.enabled)
+            Button(L10n.text("在 Finder 中显示")) {
+                NSWorkspace.shared.activateFileViewerSelecting([result.url])
+            }
+        }
+        .padding(20)
+        .onAppear {
+            player = AVPlayer(url: result.url)
+            player?.play()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
     }
 }
 
@@ -425,6 +703,13 @@ struct LumenDockLockView: View {
             screens = DashboardWindow.dockLockScreens
             coveredDisplays = DashboardWindow.coveredDisplays
         }
+        .moduleActivity(module: .dockLock,
+                        onResume: {
+                            accessibilityTrusted = AXIsProcessTrusted()
+                            screens = DashboardWindow.dockLockScreens
+                            coveredDisplays = DashboardWindow.coveredDisplays
+                        },
+                        onSuspend: {})
         .onReceive(NotificationCenter.default.publisher(for: .displayPrivacyChanged)) { _ in
             coveredDisplays = DashboardWindow.coveredDisplays
             screens = DashboardWindow.dockLockScreens

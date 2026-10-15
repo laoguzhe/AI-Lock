@@ -386,7 +386,7 @@ private struct LaunchItemRow: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
-                AppGlyph(name: item.label, image: NSWorkspace.shared.icon(forFile: item.program), size: 18)
+                AppGlyph(name: item.label, image: ApplicationArtwork.startup(program: item.program, label: item.label), size: 30)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.label)
                         .font(Lumen.Typo.dense())

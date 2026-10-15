@@ -396,6 +396,22 @@ struct LumenPreferencesView: View {
                       text: "部分全局快捷键需要「输入监控」权限。授权后需重新打开应用或重启快捷键注册。")
                 .padding(.top, Lumen.Metrics.s3)
 
+            if !DashboardWindow.hasInputMonitoringAccess {
+                NoticeBar(level: .caution,
+                          text: "双击 Command 与快捷键需要「输入监控」权限，才能在其它应用中生效。")
+                    .padding(.top, Lumen.Metrics.s3)
+                Button(L10n.text("打开输入监控设置")) {
+                    DashboardWindow.requestInputMonitoringAccess()
+                    hotkeyMessage = "已打开系统设置。请允许 AI Lock 的输入监控后，等待几秒或重新打开应用。"
+                }
+                .lumenButton(.primary, icon: "lock.open")
+                .padding(.top, Lumen.Metrics.s2)
+            } else if !DashboardWindow.globalShortcutsActive {
+                NoticeBar(level: .caution,
+                          text: "权限已授予，但全局监听尚未启动。请点击「重新注册全局快捷键」，或重新打开 AI Lock。")
+                    .padding(.top, Lumen.Metrics.s3)
+            }
+
             Button(L10n.text("重新注册全局快捷键")) {
                 let errors = DashboardWindow.refreshGlobalHotkeys()
                 hotkeyMessage = errors.isEmpty ? "全局快捷键已重新注册。" : errors.joined(separator: "；")

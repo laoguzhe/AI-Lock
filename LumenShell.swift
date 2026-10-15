@@ -156,6 +156,15 @@ final class ModuleBadgeCenter: ObservableObject {
 // MARK: - 侧栏
 // ============================================================================
 
+/// AI Lock 的 logo。build.sh 把 icon.png 复制为应用包内的 Contents/Resources/StatusIcon.png，
+/// 与菜单栏图标使用同一份文件。直接从 Xcode 运行时包内没有该文件，调用方需要自行回退。
+enum AILockLogo {
+    static let image: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "StatusIcon", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }()
+}
+
 struct LumenSidebar: View {
     @Binding var selection: DashboardWindow.Module
     @ObservedObject private var organizer = MenuBarOrganizer.shared
@@ -165,9 +174,7 @@ struct LumenSidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             // 品牌区：与窗口标题栏衔接
             HStack(spacing: Lumen.Metrics.s2) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Lumen.Palette.active)
+                brandMark
                 Text("AI Lock")
                     .font(.system(size: 12.5 * Lumen.scale, weight: .semibold))
                     .foregroundStyle(Lumen.Palette.text)
@@ -205,6 +212,23 @@ struct LumenSidebar: View {
         .background(Lumen.Palette.rail)
         .overlay(alignment: .trailing) {
             Rectangle().fill(Lumen.Palette.hairline).frame(width: 1)
+        }
+    }
+
+    /// 常驻状态指示：只在"某个开关正开着"时点亮
+    private var brandMark: some View {
+        Group {
+            if let logo = AILockLogo.image {
+                Image(nsImage: logo)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 18, height: 18)
+            } else {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Lumen.Palette.active)
+            }
         }
     }
 
