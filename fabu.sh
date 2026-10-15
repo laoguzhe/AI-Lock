@@ -114,4 +114,4 @@ run_step "创建 GitHub Release 并上传 DMG、校验和与更新清单" gh rel
 	--title "AI Lock $VERSION · Apple Silicon" --generate-notes
 
 log "✅ 公开 GitHub Release 已发布：$TAG"
-log "发布文件：$UPLOAD_DMG、$CHECKSUM 和 $MANIFEST"
+log "发布文件：${UPLOAD_DMG}、${CHECKSUM} 和 ${MANIFEST}"
