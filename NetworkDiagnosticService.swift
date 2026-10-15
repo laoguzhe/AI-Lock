@@ -698,6 +698,23 @@ enum NetworkDiagnosticService {
         }
         return address
     }
+    private static func publicIPGeolocation(_ output: String) -> String? {
+        struct Response: Decodable {
+            let success: Bool
+            let country: String?
+            let region: String?
+            let city: String?
+        }
+        guard let data = output.data(using: .utf8),
+              let response = try? JSONDecoder().decode(Response.self, from: data),
+              response.success else { return nil }
+        var components: [String] = []
+        for value in [response.country, response.region, response.city].compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) }) {
+            if !value.isEmpty, !components.contains(value) { components.append(value) }
+        }
+        return components.isEmpty ? nil : components.joined(separator: " · ")
+    }
+
     private static func local() throws -> NetworkDiagnosticResult {
         let entries = interfaces()
         let route = try NetworkDiagnosticCommand.run("/sbin/route", ["-n", "get", "default"], timeout: 4)
@@ -724,7 +741,27 @@ enum NetworkDiagnosticService {
             } catch is CancellationError { throw CancellationError() }
             catch { details += "\n\n公网 IP · " + endpoint + "\n" + error.localizedDescription }
         }
-        metrics.append(.init(name: "公网 IP", value: publicIP ?? "未读取"))
+        var publicIPLocation: String?
+        if let publicIP {
+            let language = L10n.isEnglish ? "en" : "zh-CN"
+            let endpoint = "https://ipwho.is/\(publicIP)?lang=\(language)"
+            do {
+                try Task.checkCancellation()
+                let response = try NetworkDiagnosticCommand.run("/usr/bin/curl", ["--silent", "--show-error", "--fail", "--location", "--connect-timeout", "3", "--max-time", "5", endpoint], timeout: 6)
+                details += "\n\n" + (L10n.isEnglish ? "Public IP location · " : "公网 IP 归属地 · ") + endpoint + "\n" + response.output
+                if response.status == 0 { publicIPLocation = publicIPGeolocation(response.output) }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                details += (L10n.isEnglish ? "\n\nPublic IP location lookup failed: " : "\n\n公网 IP 归属地查询失败：") + error.localizedDescription
+            }
+            details += L10n.isEnglish
+                ? "\nGeolocation is an estimate from an IP database. VPNs or proxies may show the location of their public exit IP. The public IP is sent to ipwho.is for this lookup."
+                : "\n地理位置由 IP 数据库估算；使用 VPN 或代理时显示其公网出口地址的归属地。查询会向 ipwho.is 发送公网 IP。"
+        }
+        let publicIPValue = publicIP.map { address in
+            publicIPLocation.map { address + " · " + $0 } ?? address
+        } ?? "未读取"
+        metrics.append(.init(name: "公网 IP", value: publicIPValue))
         metrics += entries.map { .init(name: $0.name + ($0.ipv6 ? " IPv6" : " IPv4"), value: $0.address + ($0.ipv6 ? "" : " / " + String(maskPrefix($0.mask) ?? -1))) }
         details += "\n\n" + (findings.isEmpty ? "未发现本机网段配置异常" : findings.joined(separator: "\n")) + "\n仅核查本机配置与已有 ARP 邻居，不扫描整个局域网；不能据此排除其他设备的 IP 冲突。"
         return .init("本机与同网段检查", passed: findings.isEmpty, summary: findings.isEmpty ? "未发现本机网段配置异常" : findings.joined(separator: "\n"), metrics: metrics, details: details)

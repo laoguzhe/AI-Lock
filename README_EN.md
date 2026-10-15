@@ -15,7 +15,7 @@ Local files, app settings, and clipboard history stay on your Mac. At launch, th
 
 AI Lock is free and has no subscription or in-app purchases. Open the downloaded DMG, drag `AI Lock.app` to Applications, then launch it from Launchpad or Finder. macOS may ask for permissions when you first use screen recording, file search, or DockLock.
 
-> This repository is currently Private, so only authorized GitHub users can access these links. Public downloads require making the repository public and creating a Release with the matching asset.
+> The repository must be Public for these links and in-app updates to work without GitHub credentials.
 
 ## Features
 
@@ -32,6 +32,14 @@ The overview brings CPU, memory, disk, and network status together with the modu
 - **App uninstaller:** Review third-party apps installed for the user or on the Mac and their identifiable related items. Select items individually to move them to Trash. System apps are excluded.
 - **Startup item inspection:** Review LaunchAgents, LaunchDaemons, and other startup configuration for issues such as a missing Label or a missing or non-executable program. A current-user LaunchAgent that cannot be parsed or is otherwise invalid can be backed up before removal. System-level items must be handled through the owning app or an administrator. Removing a configuration does not necessarily stop a service that is already running.
 - **App logs:** View AI Lock's own macOS Unified Logging records. This is not a system-wide log viewer.
+
+| System health | Process manager |
+| --- | --- |
+| ![System health module](screenshots/system-health.png) | ![Process manager module](screenshots/processes.png) |
+| App uninstaller | Startup items |
+| ![App uninstaller module](screenshots/uninstaller.png) | ![Startup item inspection module](screenshots/startup-items.png) |
+| App logs |  |
+| ![Application log module](screenshots/logs.png) |  |
 
 ### Network activity and diagnostics
 
@@ -63,9 +71,9 @@ The supplemental local index includes hidden files and folders. The quick-action
 
 The screenshot shows suggestions only; it does not open a module or run a command.
 
-![File Activity view with collection status, filters, and an empty event list](screenshots/file-activity.png)
+![Security Activity view with File Activity status and Agent Hooks connections](screenshots/file-activity.png)
 
-This screenshot shows File Activity before Endpoint Security is connected; the list is empty and contains no file paths or contents.
+The screenshot shows File Activity before Endpoint Security is connected and Agent Hooks connection status; event details are omitted.
 
 File activity requires the relevant permissions. See the [extension notes](extensions/README.md) for extension status and limitations.
 
@@ -77,9 +85,9 @@ If no content appears, click Check Clipboard Access to retry and allow access wh
 - History is stored in a local SQLite database with per-record AES-GCM encryption and a key managed by Keychain. Retention is configurable from 1 to 30 days, with a maximum of 500 items or 64 MiB. A single copied item is limited to 8 MiB. Clipboard history is not uploaded by default.
 - The app filters some common confidential/transient flags, but cannot identify every password or sensitive item and may not always identify the source app correctly. Set a retention period, exclude apps, or pause collection in Settings.
 
-![Empty clipboard history view with no copied content displayed](screenshots/clipboard-history.png)
+![Clipboard history view with no matching search results](screenshots/clipboard-history.png)
 
-For privacy, the screenshot shows an empty history rather than actual clipboard contents.
+The screenshot does not display clipboard record contents.
 
 ### Screen, displays, and menu bar
 
@@ -87,12 +95,18 @@ For privacy, the screenshot shows an empty history rather than actual clipboard 
 
 ![Screen recorder settings for display, resolution, output folder, shortcut, and system audio](screenshots/screen-recorder.png)
 
-The output path is shown as the example `~/Movies`; recording requires Screen & System Audio Recording permission.
+For privacy, the screenshot crops out recording history and hides the local output path. Recording requires Screen & System Audio Recording permission.
 
 - **Display controls:** Select one or more external displays, or select all, to adjust brightness and speaker volume. Displays must support and enable DDC/CI; some HDMI and dock setups are unsupported. Unidentified control channels are reported as failures.
 - **DockLock:** On multi-display setups, restrict the pointer from crossing an edge away from the target display and return the pointer to the Dock on that display when idle. Real mouse movement cancels a return in progress. Accessibility permission is required.
 - **Menu bar organizer:** Fold less-used menu bar icons to the left of an arrow and expand them on demand. Configure automatic collapse after expansion.
 - **Screen mask:** Show a black visual mask on selected displays while keeping at least one display visible. Press `⌘⌃⇧Esc` to remove all masks. A mask does not turn off a display or prevent macOS or other apps from reading its contents.
+
+| Display controls | DockLock |
+| --- | --- |
+| ![Display controls module](screenshots/displays.png) | ![DockLock and screen mask controls](screenshots/docklock.png) |
+| Menu bar organizer |  |
+| ![Menu bar organizer module](screenshots/menu-bar.png) |  |
 
 ## Permissions and privacy
 
@@ -115,6 +129,8 @@ Configure `⌘⌃1–9` to open modules. The quick action bar supports double-pr
 ![Settings page with appearance, text size, language, clipboard retention, and login options](screenshots/settings.png)
 
 The screenshot illustrates the settings layout; specific options and values reflect each user's preferences.
+
+![Alerts page with resource thresholds and device activity reminders](screenshots/alerts.png)
 
 DockLock also supports preferences for edge margin and target display, for example:
 
@@ -145,9 +161,9 @@ To create a signed and notarized release build:
 
 This invokes `release.sh`, which requires a Developer ID Application certificate and a configured `notarytool` profile. The DMG version comes from [`VERSION`](VERSION) and [`BUILD_NUM`](BUILD_NUM). The app bundle includes the project license and source attribution at `Contents/Resources/LICENSE.txt`.
 
-Publishing a DMG requires Developer ID signing, notarization credentials, and GitHub CLI authentication. The GitHub Release asset uses the stable name `AILock.dmg`. While this repository is Private, only users with repository access can download it.
+Publishing a DMG requires Developer ID signing, notarization credentials, and GitHub CLI authentication. The GitHub Release asset uses the stable name `AILock.dmg`; the repository must be Public so installed apps can check for and download updates without GitHub credentials.
 
-To publish a complete GitHub Release, run `./fabu.sh`. It increments `VERSION` and `BUILD_NUM`, builds, signs, notarizes, and validates the app and DMG, then runs `git add -A`, creates a release commit, pushes the current default branch, and creates a GitHub Release with `AILock.dmg` and its SHA-256 checksum. The script requires a Private repository, an authenticated GitHub CLI, usable notarization credentials, and a tag that does not already exist. Before running it, confirm that every modified and untracked repository file should be included in the release.
+To publish a complete GitHub Release, run `./fabu.sh`. It increments `VERSION` and `BUILD_NUM`, builds, signs, notarizes, and validates the app and DMG, then runs `git add -A`, creates a release commit, pushes the current default branch, and creates a GitHub Release with `AILock.dmg`, its SHA-256 checksum, and the `AILock-update.json` manifest. At launch, the app checks the manifest, offers newer versions, verifies the downloaded disk image, installs the update, and relaunches. The script requires a Public repository, an authenticated GitHub CLI, usable notarization credentials, and a tag that does not already exist. Before running it, confirm that every modified and untracked repository file should be included in the release.
 
 Other development checks are listed in [`tests/`](tests/). Real Endpoint Security authorization and system extension operation still require an approved entitlement and validation on an authorized Mac. A local prototype build does not replace that validation.
 

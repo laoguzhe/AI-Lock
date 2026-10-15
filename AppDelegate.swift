@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.promptForFullDiskAccessIfNeeded()
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            UpdateService.shared.checkForUpdate()
+        }
     }
 
     private func promptForFullDiskAccessIfNeeded() {

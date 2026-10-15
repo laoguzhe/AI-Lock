@@ -14,7 +14,7 @@ final class LogsPageModel: ObservableObject {
     @Published var search = ""
     @Published var level: SystemLogLevel = .all
     @Published var quick: QuickFilter = .all
-    @Published var status = "正在加载 AI Lock 最近 10 分钟的应用日志…"
+    @Published var status = "正在加载最近 10 分钟的应用与系统日志…"
     @Published var failed = false
     @Published var detail: SystemLogGroup?
 
@@ -80,7 +80,7 @@ final class LogsPageModel: ObservableObject {
         let filteredEntries = filtered
         let merged = SystemLogGroup.merge(filteredEntries)
         groups = merged
-        status = L10n.format("显示 %{0} 个事件 / %{1} 条记录 · 当前进程最近 10 分钟（最多 2000 条）",
+        status = L10n.format("显示 %{0} 个事件 / %{1} 条记录 · 应用与系统最近 10 分钟（最多 2000 条）",
                              arguments: [String(merged.count), String(filteredEntries.count)])
         if level != .all { quick = .all }
         ModuleBadgeCenter.shared.report(.logs, merged.filter { $0.latest.needsAttention }.count)
@@ -92,7 +92,7 @@ final class LogsPageModel: ObservableObject {
         entries = []
         groups = []
         failed = false
-        status = "正在加载 AI Lock 最近 10 分钟的应用日志…"
+        status = "正在加载最近 10 分钟的应用与系统日志…"
         store.fetch(onBatch: { [weak self] batch, count, finished in
             DispatchQueue.main.async {
                 guard let self, request == self.generation else { return }
@@ -125,17 +125,21 @@ final class LogsPageModel: ObservableObject {
     }
 
     func export() {
-        let report = "辅助功能授权：\(AXIsProcessTrusted() ? "已授权" : "未授权")\n"
-            + "Dock 锁定：\(DashboardWindow.dockLockEnabled ? "开启" : "关闭")\n\n"
-            + LogDiagnosticReport.make(entries: filtered, scope: "当前筛选结果")
+        let logs = "\(L10n.text("AI Lock 应用日志"))\n\(L10n.text("导出时间："))\(Date())\n"
+            + "\(L10n.text("范围：当前筛选结果"))\n\(L10n.text("记录数："))\(filtered.count)\n"
+            + filtered.sorted { $0.date < $1.date }.map { entry in
+                LogDiagnosticReport.redact(
+                    "\n[\(entry.formattedTime)] [\(entry.level.rawValue)] \(entry.process) / \(entry.subsystem) / \(entry.category)\n\(entry.message)\n"
+                )
+            }.joined()
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "AI-Lock-diagnostics.txt"
-        panel.title = L10n.text("导出当前筛选的诊断记录")
-        panel.message = L10n.text("已隐藏常见敏感字段。导出后请检查内容再分享。")
+        panel.nameFieldStringValue = "AI-Lock-logs.txt"
+        panel.title = L10n.text("导出当前筛选的日志")
+        panel.message = L10n.text("已隐藏常见敏感字段。导出日志后请检查内容再分享。")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try report.write(to: url, atomically: true, encoding: .utf8)
-            status = "诊断记录已导出"
+            try logs.write(to: url, atomically: true, encoding: .utf8)
+            status = "日志已导出"
         } catch {
             status = "导出失败：\(error.localizedDescription)"
         }
@@ -181,7 +185,7 @@ struct LumenLogsView: View {
     private var actions: some View {
         Button(L10n.text("重新加载")) { model.load() }
             .lumenButton(.secondary, icon: "arrow.clockwise")
-        Button(L10n.text("导出诊断")) { model.export() }
+        Button(L10n.text("导出日志")) { model.export() }
             .lumenButton(.secondary, icon: "square.and.arrow.up")
             .disabled(model.groups.isEmpty)
     }

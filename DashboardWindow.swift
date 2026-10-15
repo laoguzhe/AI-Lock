@@ -45,7 +45,7 @@ final class DashboardWindow: NSWindowController, NSWindowDelegate {
 
     enum Module: String {
         var displayTitle: String { self == .logs ? "应用日志" : rawValue }
-        case menuBarOrganizer = "菜单栏收纳", files = "文件活动", processes = "进程管理", network = "网络活动", networkDiagnostics = "网络诊断", logs = "系统日志", clipboard = "剪贴板历史", settings = "监控预警", preferences = "设置", dockLock = "DockLock", search = "快速文件搜索", cacheCleaner = "系统健康检查", uninstaller = "应用卸载", launchItems = "启动项检查", launcher = "快捷操作", screenRecorder = "录屏工具", displayBrightness = "显示器控制"
+        case menuBarOrganizer = "菜单栏收纳", files = "安全活动", processes = "进程管理", network = "网络活动", networkDiagnostics = "网络诊断", logs = "系统日志", clipboard = "剪贴板历史", settings = "监控预警", preferences = "设置", dockLock = "DockLock", search = "快速文件搜索", cacheCleaner = "系统健康检查", uninstaller = "应用卸载", launchItems = "启动项检查", launcher = "快捷操作", screenRecorder = "录屏工具", displayBrightness = "显示器控制"
     }
 
     static var dockLockEnabled: Bool { lockController?.enabled ?? (UserDefaults.standard.object(forKey: "dockLock.enabled") as? Bool ?? true) }
@@ -855,7 +855,7 @@ struct DashboardOverviewView: View {
         ("系统健康检查", "stethoscope", .cacheCleaner),
         ("DockLock", "dock.rectangle", .dockLock),
         ("菜单栏收纳", "menubar.rectangle", .menuBarOrganizer),
-        ("文件活动", "doc.text.magnifyingglass", .files),
+        ("安全活动", "shield.lefthalf.filled", .files),
         ("应用卸载", "app.dashed", .uninstaller),
         ("启动项检查", "rectangle.stack.badge.play", .launchItems),
         ("进程管理", "cpu", .processes),
@@ -1315,7 +1315,7 @@ struct DashboardOverviewView: View {
     private func description(for module: DashboardWindow.Module, title: String) -> String {
         let descriptions: [DashboardWindow.Module: String] = [
             .dockLock: "配置 DockLock 目标屏幕、锁定边缘和自动拉回行为。",
-            .files: "查看文件审计状态和本机文件活动。",
+            .files: "观察本机应用启动、网络连接和可用的文件审计事件。",
             .processes: "查看进程资源占用并管理进程。",
             .network: "查看当前网络连接和活动流量。",
             .networkDiagnostics: "测试网络速度、多节点、多线路、DNS、路由和本机网段配置。",
@@ -1835,7 +1835,7 @@ private struct PreferencesWindowView: View {
     }
 
     private func moduleSymbol(_ module: DashboardWindow.Module) -> String {
-        ["DockLock 设置": "dock.rectangle", "快捷操作": "command", "菜单栏收纳": "menubar.rectangle", "文件活动": "doc.text.magnifyingglass", "应用卸载": "app.dashed", "启动项检查": "rectangle.stack.badge.play", "进程管理": "cpu", "网络活动": "network", "网络诊断": "speedometer", "录屏工具": "record.circle", "显示器控制": "sun.max", "系统日志": "list.bullet.rectangle", "剪贴板历史": "clipboard", "系统健康检查": "stethoscope", "设置": "gearshape"][module.rawValue] ?? "square"
+        ["DockLock 设置": "dock.rectangle", "快捷操作": "command", "菜单栏收纳": "menubar.rectangle", "安全活动": "shield.lefthalf.filled", "应用卸载": "app.dashed", "启动项检查": "rectangle.stack.badge.play", "进程管理": "cpu", "网络活动": "network", "网络诊断": "speedometer", "录屏工具": "record.circle", "显示器控制": "sun.max", "系统日志": "list.bullet.rectangle", "剪贴板历史": "clipboard", "系统健康检查": "stethoscope", "设置": "gearshape"][module.rawValue] ?? "square"
     }
 
 
@@ -2460,7 +2460,7 @@ private struct CommandPaletteCommand: Identifiable {
     var id: String { title }
 
     static let all: [CommandPaletteCommand] = [
-        .init(title: L10n.text("打开文件活动 / 分析文件"), keywords: "file large storage 大文件 文件", module: .files, action: nil),
+        .init(title: L10n.text("打开安全活动 / 分析文件"), keywords: "security file activity 文件", module: .files, action: nil),
         .init(title: L10n.text("打开系统健康检查"), keywords: "health cache 清理 缓存", module: .cacheCleaner, action: nil),
         .init(title: L10n.text("打开应用卸载"), keywords: "uninstall app 卸载 应用", module: .uninstaller, action: nil),
         .init(title: L10n.text("打开启动项检查"), keywords: "startup login background 后台 登录项", module: .launchItems, action: nil),
@@ -3084,15 +3084,7 @@ private struct MacHealthView: View {
                             ScrollView(.vertical) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(model.externalDisks) { disk in
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "externaldrive.fill").foregroundStyle(.purple)
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(disk.name).font(.system(size: 12, weight: .semibold))
-                                                Text(L10n.format("已用 %{0} / 共 %{1} · 可用 %{2}", arguments: [size(disk.used), size(disk.total), size(disk.available)]))
-                                                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                                            }
-                                            Spacer(minLength: 0)
-                                        }.help(disk.url.path)
+                                        externalDiskRow(disk)
                                     }
                                 }
                             }.frame(maxHeight: 110)
@@ -3191,6 +3183,41 @@ private struct MacHealthView: View {
     private func cacheName(_ entry: CacheEntry) -> String {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.name) else { return entry.name }
         return FileManager.default.displayName(atPath: url.path)
+    }
+    private func externalDiskRow(_ disk: MountedDiskUsage) -> some View {
+        let total = max(1, disk.total)
+        let used = min(max(0, disk.used), total)
+        let usedRatio = Double(used) / Double(total)
+        let usedPercent = Int((usedRatio * 100).rounded())
+        let availablePercent = 100 - usedPercent
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.fill").foregroundStyle(.purple)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(disk.name).font(.system(size: 12, weight: .semibold))
+                    Text(L10n.format("已用 %{0} / 共 %{1} · 可用 %{2}", arguments: [size(disk.used), size(disk.total), size(disk.available)]))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.14))
+                    Capsule().fill(.purple).frame(width: geometry.size.width * usedRatio)
+                }
+            }
+            .frame(height: 6)
+            .accessibilityLabel("\(L10n.text("已使用")) \(usedPercent)%, \(L10n.text("可用空间")) \(availablePercent)%")
+            HStack {
+                Text("\(L10n.text("已使用")) \(usedPercent)%").foregroundStyle(.purple)
+                Spacer()
+                Text("\(L10n.text("可用空间")) \(availablePercent)%").foregroundStyle(.secondary)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .monospacedDigit()
+        }
+        .padding(.vertical, 2)
+        .help(disk.url.path)
     }
     private func diskUsageSegments(total: UInt64, used: UInt64) -> [DiskUsageSegment] {
         guard total > 0, used > 0 else { return [] }
@@ -3946,7 +3973,7 @@ final class QuickActionWindowController: NSWindowController, NSTextFieldDelegate
     private let separator = NSBox()
     private let actions: [(String, String, DashboardWindow.Module)] = [
         ("搜索应用与文件", "search apps files", .search), ("剪贴板历史", "clipboard history", .clipboard),
-        ("文件活动", "files audit", .files), ("进程管理", "process", .processes),
+        ("安全活动", "security files audit", .files), ("进程管理", "process", .processes),
         ("网络活动", "network", .network), ("网络诊断", "speed dns ping route 网络测速", .networkDiagnostics), ("录屏工具", "screen recording", .screenRecorder), ("应用日志", "logs", .logs),
         ("系统健康检查", "cache clean", .cacheCleaner), ("应用卸载", "uninstall", .uninstaller),
         ("启动项检查", "startup", .launchItems), ("设置", "settings preferences", .preferences)

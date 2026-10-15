@@ -17,6 +17,7 @@ final class ClipboardPageModel: ObservableObject {
     @Published var noteText = ""
     @Published var showClearConfirm = false
     @Published var showBackupSheet = false
+    @Published var clipboardAccessNotice: String?
     @Published var passphrase = ""
     @Published var passphraseConfirm = ""
     @Published var backupMode: BackupMode = .export
@@ -95,16 +96,33 @@ final class ClipboardPageModel: ObservableObject {
 
     func checkClipboardAccess() {
         if history.pasteboardAccessDenied {
-            status = "剪贴板读取已被系统拒绝，请在系统设置的隐私与安全性中允许 AI Lock 访问剪贴板。"
+            let notice = "剪贴板访问当前被系统拒绝。请在系统设置「隐私与安全性」中找到剪贴板访问，并允许 AI Lock。"
+            clipboardAccessNotice = notice
+            status = notice
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") { NSWorkspace.shared.open(url) }
         } else if history.isPaused {
-            status = "请先继续采集，再读取剪贴板。"
+            let notice = "剪贴板采集已暂停。点击「继续采集」后，再检查剪贴板访问。"
+            clipboardAccessNotice = notice
+            status = notice
+        } else if history.isLoadingHistory {
+            let notice = "剪贴板历史仍在加载，请稍后再检查访问。"
+            clipboardAccessNotice = notice
+            status = notice
+        } else if let error = history.storageError {
+            let notice = "剪贴板历史暂时不可用，无法保存检查到的内容：\(error)"
+            clipboardAccessNotice = notice
+            status = notice
         } else {
             let read = history.readCurrentClipboard()
             refresh()
-            if !history.oversizedContentSkipped {
-                status = read ? "已读取当前剪贴板。" : "未读取到内容：请先复制普通文本，再重试；若系统询问，请允许剪贴板访问。"
+            if history.oversizedContentSkipped {
+                clipboardAccessNotice = "剪贴板内容超过 50 MB，未保存到历史记录。"
+            } else if read {
+                clipboardAccessNotice = "已成功读取当前剪贴板；若内容符合过滤规则，会显示在历史列表中。"
+            } else {
+                clipboardAccessNotice = "未读取到剪贴板内容。请先复制内容；如果系统弹出访问请求，请选择允许。"
             }
+            status = clipboardAccessNotice ?? status
         }
     }
 
@@ -377,7 +395,11 @@ struct LumenClipboardView: View {
     private var content: some View {
         VStack(spacing: 0) {
             toolbar
-            if model.history.pasteboardAccessDenied {
+            if let notice = model.clipboardAccessNotice {
+                NoticeBar(level: model.history.pasteboardAccessDenied ? .caution : .info, text: notice)
+                    .padding(.horizontal, Lumen.Metrics.pageInset)
+            }
+            if model.history.pasteboardAccessDenied && model.clipboardAccessNotice == nil {
                 NoticeBar(level: .caution, text: "系统已拒绝剪贴板访问，请点击「检查剪贴板访问」前往设置。")
                     .padding(.horizontal, Lumen.Metrics.pageInset)
             }

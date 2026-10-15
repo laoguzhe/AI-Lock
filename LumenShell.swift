@@ -39,7 +39,7 @@ enum ModuleCatalog {
         case .processes:          return "进程"
         case .network:            return "网络活动"
         case .networkDiagnostics: return "网络诊断"
-        case .files:              return "文件活动"
+        case .files:              return "安全活动"
         case .clipboard:          return "剪贴板"
         case .uninstaller:        return "卸载与清理"
         case .launchItems:        return "启动项"

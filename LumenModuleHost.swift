@@ -284,6 +284,7 @@ final class LaunchItemsPageModel: ObservableObject {
 struct LumenLaunchItemsView: View {
     @ObservedObject private var localizationState = LumenLanguageState.shared
     @StateObject private var model = LaunchItemsPageModel()
+    @State private var selectedItemID: String?
 
     private static let columns: [ColumnSpec] = [
         .flex("项目", min: 150, ideal: 200),
@@ -344,7 +345,9 @@ struct LumenLaunchItemsView: View {
 
                             ForEach(model.visible) { item in
                                 LaunchItemRow(item: item, isProblem: model.problems.contains { $0.id == item.id },
+                                              isSelected: selectedItemID == item.id,
                                               columns: Self.columns,
+                                              onSelect: { selectedItemID = item.id },
                                               onRepair: { model.repair(item) },
                                               onTrash: { model.moveToTrash(item) })
                             }
@@ -379,7 +382,9 @@ private extension ColumnSpec {
 private struct LaunchItemRow: View {
     let item: StartupItem
     let isProblem: Bool
+    let isSelected: Bool
     let columns: [ColumnSpec]
+    let onSelect: () -> Void
     let onRepair: () -> Void
     let onTrash: () -> Void
 
@@ -429,6 +434,11 @@ private struct LaunchItemRow: View {
                 .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background(isSelected ? Lumen.Palette.rowSelected : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Lumen.Metrics.rControl, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
         .contextMenu {
             Button(L10n.text("在 Finder 中显示")) {
                 NSWorkspace.shared.activateFileViewerSelecting([item.url])

@@ -36,7 +36,6 @@ struct LumenOverviewView: View {
         let _ = language.revision
         VStack(alignment: .leading, spacing: 0) {
             topBar
-            if !query.isEmpty { searchResultsSection }
             resourceMeters
             networkBlock
             moduleGrid
@@ -367,6 +366,7 @@ struct LumenOverviewView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
+            if !query.isEmpty { searchResultsSection }
             HStack(spacing: 8) {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass")

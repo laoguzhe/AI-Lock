@@ -378,6 +378,11 @@ struct NetworkDiagnosticsView: View {
         let routeInterface = result.flatMap { metricText("默认接口", $0) } ?? "—"
         let gateway = result.flatMap { metricText("默认网关", $0) } ?? "—"
         let ip = result?.metrics.first { $0.name == routeInterface + " IPv4" }?.value ?? "—"
+        let publicIPValue = result.flatMap { metricText("公网 IP", $0) } ?? "—"
+        let publicIPParts = publicIPValue.components(separatedBy: " · ")
+        let publicIP = publicIPParts.first ?? "—"
+        let hasPublicIPLocation = publicIPParts.count > 1
+        let publicIPLocation = hasPublicIPLocation ? publicIPParts.dropFirst().joined(separator: " · ") : publicIP == "—" ? "—" : L10n.text("归属地暂不可用")
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -387,8 +392,14 @@ struct NetworkDiagnosticsView: View {
                         .help(result.map { L10n.text($0.summary) } ?? "")
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 readout("IP / 子网", value: ip)
-                readout("公网 IP", value: result.flatMap { metricText("公网 IP", $0) } ?? "—")
-                    .help(L10n.text("当前网络出口地址，可能为 VPN 或代理的公网 IP"))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.text("公网 IP")).font(.system(size: 8)).foregroundStyle(DiagnosticConsole.muted).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(publicIP).font(.system(size: 12, weight: .medium, design: .monospaced)).lineLimit(1).minimumScaleFactor(0.7).textSelection(.enabled)
+                    Text(publicIPLocation).font(.system(size: 9)).foregroundStyle(hasPublicIPLocation ? DiagnosticConsole.cyan : DiagnosticConsole.muted).lineLimit(1).minimumScaleFactor(0.7)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                    .help(L10n.isEnglish
+                          ? "Public egress IP and estimated location. ipwho.is receives the IP for lookup; VPNs or proxies may show their exit location."
+                          : "当前网络出口 IP 及估算归属地。查询会将公网 IP 发送给 ipwho.is；VPN 或代理可能显示其出口位置。")
             }
         }
     }

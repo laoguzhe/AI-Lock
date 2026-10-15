@@ -6,6 +6,9 @@ enum AgentHookProvider: String, CaseIterable, Identifiable, Hashable {
     case claude = "Claude Code"
     case codex = "Codex"
     case cursor = "Cursor"
+    case windsurf = "Windsurf"
+    case gemini = "Gemini CLI"
+    case opencode = "OpenCode"
 
     var id: String { rawValue }
     var argument: String {
@@ -13,6 +16,9 @@ enum AgentHookProvider: String, CaseIterable, Identifiable, Hashable {
         case .claude: return "claude"
         case .codex: return "codex"
         case .cursor: return "cursor"
+        case .windsurf: return "windsurf"
+        case .gemini: return "gemini"
+        case .opencode: return "opencode"
         }
     }
     var executable: String {
@@ -20,6 +26,9 @@ enum AgentHookProvider: String, CaseIterable, Identifiable, Hashable {
         case .claude: return "claude"
         case .codex: return "codex"
         case .cursor: return "Cursor"
+        case .windsurf: return "Windsurf Cascade"
+        case .gemini: return "Gemini CLI"
+        case .opencode: return "OpenCode"
         }
     }
     var configURL: URL {
@@ -28,6 +37,9 @@ enum AgentHookProvider: String, CaseIterable, Identifiable, Hashable {
         case .claude: return home.appendingPathComponent(".claude/settings.json")
         case .codex: return home.appendingPathComponent(".codex/hooks.json")
         case .cursor: return home.appendingPathComponent(".cursor/hooks.json")
+        case .windsurf: return home.appendingPathComponent(".codeium/windsurf/hooks.json")
+        case .gemini: return home.appendingPathComponent(".gemini/settings.json")
+        case .opencode: return home.appendingPathComponent(".config/opencode/plugins/ailock-security-monitor.ts")
         }
     }
 }
@@ -45,30 +57,6 @@ struct AgentHookRecord: Identifiable {
     let outcome: String
     let decision: String
     let reason: String
-}
-
-struct AgentHookPolicy: Codable, Equatable {
-    var blockSensitiveWrites = true
-    var blockDestructiveCommands = true
-    var commandFragments = ["rm -rf /", "git push --force", "git reset --hard"]
-
-    static var url: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("AILock/agent-hook-policy.json")
-    }
-
-    static func load() -> AgentHookPolicy {
-        guard let data = try? Data(contentsOf: url),
-              let value = try? JSONDecoder().decode(AgentHookPolicy.self, from: data) else { return AgentHookPolicy() }
-        return value
-    }
-
-    func save() throws {
-        let directory = Self.url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(self).write(to: Self.url, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.url.path)
-    }
 }
 
 /// Local, metadata-only hook history. Tool output and file contents are never persisted.
@@ -137,6 +125,10 @@ private enum AgentHookHistory {
             return result
         }) ?? []
     }
+
+    static func clear() {
+        _ = try? database { db in sqlite3_exec(db, "DELETE FROM agent_hook_events", nil, nil, nil) }
+    }
 }
 
 final class AgentHookStore: ObservableObject {
@@ -150,51 +142,62 @@ final class AgentHookStore: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
     func refresh() { events = AgentHookHistory.recent() }
+    func clearHistory() { AgentHookHistory.clear(); refresh() }
     deinit { timer?.invalidate() }
 }
 
 final class AgentHookManager: ObservableObject {
     static let shared = AgentHookManager()
     @Published private(set) var statuses: [AgentHookProvider: String] = [:]
-    @Published private(set) var policy = AgentHookPolicy.load()
-    @Published private(set) var policyStatus = ""
 
     private init() {
-        for provider in AgentHookProvider.allCases { statuses[provider] = Self.isInstalled(provider) ? "已接入" : "未接入" }
+        for provider in AgentHookProvider.allCases {
+            statuses[provider] = Self.isMonitorInstalled(provider) ? "仅监视已接入" : (Self.isInstalled(provider) ? "AI Lock Hook 已接入" : "未接入")
+        }
     }
 
     func install(_ provider: AgentHookProvider) {
+        installMonitor(provider)
+    }
+
+    /// Installs an advisory-only hook. It records tool calls and never returns a deny decision.
+    func installMonitor(_ provider: AgentHookProvider) {
         do {
-            try Self.editConfig(provider, install: true)
-            statuses[provider] = "已接入 · 重启 \(provider.executable) 后生效"
+            try Self.editConfig(provider, install: true, monitorOnly: true)
+            statuses[provider] = "仅监视已接入 · 重启 \(provider.executable) 后生效"
         } catch { statuses[provider] = "接入失败：\(error.localizedDescription)" }
     }
 
     func uninstall(_ provider: AgentHookProvider) {
         do {
-            try Self.editConfig(provider, install: false)
+            try Self.editConfig(provider, install: false, monitorOnly: false)
             statuses[provider] = "已移除 · 重启 \(provider.executable) 后生效"
         } catch { statuses[provider] = "移除失败：\(error.localizedDescription)" }
     }
 
-    func savePolicy(blockSensitiveWrites: Bool, blockDestructiveCommands: Bool, commandFragments: String) {
-        var next = policy
-        next.blockSensitiveWrites = blockSensitiveWrites
-        next.blockDestructiveCommands = blockDestructiveCommands
-        next.commandFragments = commandFragments.split(whereSeparator: \.isNewline).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(30).map { String($0.prefix(160)) }
-        do {
-            try next.save()
-            policy = next
-            policyStatus = "策略已保存"
-        } catch {
-            policyStatus = "策略保存失败：\(error.localizedDescription)"
-        }
-    }
-
     private static func isInstalled(_ provider: AgentHookProvider) -> Bool {
+        if provider == .opencode {
+            return (try? String(contentsOf: provider.configURL, encoding: .utf8))?.contains("AILOCK_AGENT_MONITOR") == true
+        }
         guard let data = try? Data(contentsOf: provider.configURL),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         return containsManagedHook(object, provider: provider)
+    }
+
+    private static func isMonitorInstalled(_ provider: AgentHookProvider) -> Bool {
+        if provider == .opencode {
+            return (try? String(contentsOf: provider.configURL, encoding: .utf8))?.contains("AILOCK_AGENT_MONITOR") == true
+        }
+        guard let data = try? Data(contentsOf: provider.configURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        let marker = "--ailock-agent-hook \(provider.argument) watch-"
+        func has(_ value: Any) -> Bool {
+            if let string = value as? String { return string.contains(marker) }
+            if let array = value as? [Any] { return array.contains(where: has) }
+            if let dictionary = value as? [String: Any] { return dictionary.values.contains(where: has) }
+            return false
+        }
+        return has(object)
     }
 
     private static func containsManagedHook(_ object: [String: Any], provider: AgentHookProvider) -> Bool {
@@ -208,7 +211,11 @@ final class AgentHookManager: ObservableObject {
         return has(object)
     }
 
-    private static func editConfig(_ provider: AgentHookProvider, install: Bool) throws {
+    private static func editConfig(_ provider: AgentHookProvider, install: Bool, monitorOnly: Bool) throws {
+        if provider == .opencode {
+            try editOpenCodePlugin(install: install)
+            return
+        }
         let url = provider.configURL
         let data = FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : Data("{}".utf8)
         guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -216,6 +223,7 @@ final class AgentHookManager: ObservableObject {
         }
         let binary = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/AILock").path
         let baseCommand = "\"\(binary.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" --ailock-agent-hook \(provider.argument)"
+        func hookCommand(_ mode: String) -> String { baseCommand + (monitorOnly ? " watch-" : " ") + mode }
         let marker = "--ailock-agent-hook \(provider.argument)"
         func isManaged(_ value: Any) -> Bool { (value as? [String: Any])?["command"].map { String(describing: $0).contains(marker) } ?? false }
         func removeManaged(_ list: [Any]) -> [Any] { list.filter { !isManaged($0) } }
@@ -234,9 +242,9 @@ final class AgentHookManager: ObservableObject {
                     return copy
                 }
                 if install && event != "PostToolUseFailure" {
-                    groups.append(["matcher": "", "hooks": [["type": "command", "command": baseCommand + (event == "PreToolUse" ? " pre" : " post")]]])
+                    groups.append(["matcher": "", "hooks": [["type": "command", "command": hookCommand(event == "PreToolUse" ? "pre" : "post")]]])
                 } else if install && event == "PostToolUseFailure" {
-                    groups.append(["matcher": "", "hooks": [["type": "command", "command": baseCommand + " failure"]]])
+                    groups.append(["matcher": "", "hooks": [["type": "command", "command": hookCommand("failure")]]])
                 }
                 if groups.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = groups }
             }
@@ -254,7 +262,7 @@ final class AgentHookManager: ObservableObject {
                     return copy
                 }
                 if install {
-                    groups.append(["matcher": "", "hooks": [["type": "command", "command": baseCommand + (event == "PreToolUse" ? " pre" : " post"), "timeout": 5]]])
+                    groups.append(["matcher": "", "hooks": [["type": "command", "command": hookCommand(event == "PreToolUse" ? "pre" : "post"), "timeout": 5]]])
                 }
                 if groups.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = groups }
             }
@@ -265,12 +273,46 @@ final class AgentHookManager: ObservableObject {
                 var handlers = removeManaged(hooks[event] as? [Any] ?? [])
                 if install {
                     let mode = event == "preToolUse" ? "pre" : (event == "postToolUse" ? "post" : "failure")
-                    handlers.append(["command": baseCommand + " " + mode, "failClosed": false, "timeout": 5])
+                    handlers.append(["command": hookCommand(mode), "failClosed": false, "timeout": 5])
                 }
                 if handlers.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = handlers }
             }
             if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
             if root["version"] == nil { root["version"] = 1 }
+        case .windsurf:
+            var hooks = root["hooks"] as? [String: Any] ?? [:]
+            for event in ["pre_read_code", "post_read_code", "pre_write_code", "post_write_code",
+                          "pre_run_command", "post_run_command", "pre_mcp_tool_use", "post_mcp_tool_use"] {
+                var entries = hooks[event] as? [[String: Any]] ?? []
+                entries.removeAll { String(describing: $0["command"] ?? "").contains(marker) }
+                if install {
+                    entries.append(["command": hookCommand(event), "show_output": false])
+                }
+                if entries.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = entries }
+            }
+            if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
+        case .gemini:
+            var hooks = root["hooks"] as? [String: Any] ?? [:]
+            for event in ["BeforeTool", "AfterTool"] {
+                var groups = hooks[event] as? [[String: Any]] ?? []
+                groups = groups.compactMap { group in
+                    var copy = group
+                    let original = group["hooks"] as? [Any] ?? []
+                    let filtered = original.filter { item in
+                        !String(describing: (item as? [String: Any])?["command"] ?? "").contains(marker)
+                    }
+                    if !original.isEmpty && filtered.isEmpty { return nil }
+                    if group["hooks"] != nil { copy["hooks"] = filtered }
+                    return copy
+                }
+                if install {
+                    groups.append(["matcher": ".*", "hooks": [["name": "AILock monitor", "type": "command", "command": hookCommand(event == "BeforeTool" ? "pre" : "post"), "timeout": 5000]]])
+                }
+                if groups.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = groups }
+            }
+            if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
+        case .opencode:
+            break // Handled by editOpenCodePlugin before decoding a JSON configuration.
         }
 
         guard JSONSerialization.isValidJSONObject(root) else { throw NSError(domain: "AILock.AgentHooks", code: 4, userInfo: [NSLocalizedDescriptionKey: "更新后的配置无法编码"]) }
@@ -282,6 +324,59 @@ final class AgentHookManager: ObservableObject {
         }
         let output = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try output.write(to: url, options: [.atomic])
+    }
+
+    private static func editOpenCodePlugin(install: Bool) throws {
+        let url = AgentHookProvider.opencode.configURL
+        if !install {
+            if let source = try? String(contentsOf: url, encoding: .utf8), source.contains("AILOCK_AGENT_MONITOR") {
+                try FileManager.default.removeItem(at: url)
+            }
+            return
+        }
+        if FileManager.default.fileExists(atPath: url.path),
+           let existing = try? String(contentsOf: url, encoding: .utf8),
+           !existing.contains("AILOCK_AGENT_MONITOR") {
+            throw NSError(domain: "AILock.AgentHooks", code: 5, userInfo: [NSLocalizedDescriptionKey: "OpenCode 插件路径已被其他文件占用；为避免覆盖，未修改该文件"])
+        }
+        let binary = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/AILock").path
+        let quotedBinary = (try? JSONSerialization.data(withJSONObject: [binary], options: [.fragmentsAllowed]))
+            .flatMap { String(data: $0, encoding: .utf8) }?.dropFirst().dropLast() ?? Substring("\"/Applications/AILock.app/Contents/MacOS/AILock\"")
+        let source = #"""
+        // AILOCK_AGENT_MONITOR: advisory-only OpenCode tool activity integration.
+        const AILOCK_BIN = \#(quotedBinary);
+        async function report(mode, input, args, outcome) {
+          try {
+            const payload = {
+              event_name: mode === "pre" ? "tool.execute.before" : "tool.execute.after",
+              session_id: input.sessionID ?? input.session_id ?? "",
+              call_id: input.toolCallID ?? input.callID ?? "",
+              cwd: input.directory ?? process.cwd(),
+              tool_name: input.tool ?? input.name ?? "",
+              tool_input: args ?? {},
+              outcome: outcome ?? ""
+            };
+            const child = Bun.spawn([AILOCK_BIN, "--ailock-agent-hook", "opencode", `watch-${mode}`], {
+              stdin: "pipe", stdout: "ignore", stderr: "ignore"
+            });
+            child.stdin.write(JSON.stringify(payload));
+            child.stdin.end();
+            await child.exited;
+          } catch (_) { /* Monitoring failures never affect the agent action. */ }
+        }
+        export const AILockSecurityMonitor = async ({ directory }) => ({
+          "tool.execute.before": async (input, output) => report("pre", { ...input, directory }, output?.args),
+          "tool.execute.after": async (input, output) => report("post", { ...input, directory }, output?.args, output?.status)
+        });
+        """#
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        if FileManager.default.fileExists(atPath: url.path) {
+            let backup = directory.appendingPathComponent(url.lastPathComponent + ".ailock-backup-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: ""))
+            try FileManager.default.copyItem(at: url, to: backup)
+        }
+        try source.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 
@@ -300,25 +395,48 @@ private struct AgentHookInput {
 
     init(provider: AgentHookProvider, object: [String: Any]) {
         self.provider = provider
+        let details = object["tool_info"] as? [String: Any] ?? object
         func text(_ keys: String...) -> String {
             for key in keys { if let value = object[key] as? String, !value.isEmpty { return value } }
             return ""
         }
-        eventName = text("hook_event_name", "event_name", "event")
-        sessionID = text("session_id", "sessionId", "conversation_id", "conversationId", "run_id", "turn_id")
-        callID = text("tool_use_id", "tool_call_id", "call_id", "id")
-        tool = text("tool_name", "toolName", "name")
-        cwd = text("cwd", "working_directory", "workingDirectory")
-        var args = object["tool_input"] as? [String: Any] ?? object["input"] as? [String: Any] ?? [:]
+        func detailText(_ keys: String...) -> String {
+            for key in keys { if let value = details[key] as? String, !value.isEmpty { return value } }
+            return ""
+        }
+        eventName = text("hook_event_name", "agent_action_name", "event_name", "event")
+        sessionID = text("session_id", "sessionId", "trajectory_id", "conversation_id", "conversationId", "run_id", "turn_id")
+        let executionID = text("execution_id")
+        let eventTool = text("tool_name", "toolName", "name")
+        let nestedTool = detailText("tool_name", "mcp_tool_name", "toolName", "name")
+        tool = !eventTool.isEmpty ? eventTool : (!nestedTool.isEmpty ? nestedTool : eventName)
+        cwd = !text("cwd", "working_directory", "workingDirectory").isEmpty
+            ? text("cwd", "working_directory", "workingDirectory")
+            : detailText("cwd", "working_directory", "workingDirectory")
+        var args = object["tool_input"] as? [String: Any]
+            ?? details["tool_input"] as? [String: Any]
+            ?? details["mcp_tool_arguments"] as? [String: Any]
+            ?? details["args"] as? [String: Any]
+            ?? object["input"] as? [String: Any]
+            ?? [:]
         if args.isEmpty, let encoded = object["tool_input"] as? String, let bytes = encoded.data(using: .utf8),
            let decoded = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] { args = decoded }
         input = args
         let pathKeys = ["file_path", "path", "target_file", "filePath", "targetPath", "filename"]
-        path = pathKeys.compactMap { args[$0] as? String }.first(where: { !$0.isEmpty }) ?? text("file_path", "path")
-        command = (args["command"] as? String) ?? (args["cmd"] as? String) ?? (object["command"] as? String) ?? (args["shell_command"] as? String) ?? ""
-        if eventName.lowercased().contains("failure") { outcome = "失败" }
-        else if eventName.lowercased().contains("post") { outcome = "已完成" }
+        path = pathKeys.compactMap { args[$0] as? String }.first(where: { !$0.isEmpty })
+            ?? pathKeys.compactMap { details[$0] as? String }.first(where: { !$0.isEmpty })
+            ?? text("file_path", "path")
+        command = (args["command"] as? String) ?? (args["command_line"] as? String) ?? (args["cmd"] as? String)
+            ?? (args["shell_command"] as? String) ?? (details["command_line"] as? String)
+            ?? (object["command"] as? String) ?? ""
+        let rawOutcome = text("outcome", "status").lowercased()
+        if eventName.lowercased().contains("failure") || rawOutcome.contains("error") || rawOutcome.contains("fail") { outcome = "失败" }
+        else if eventName.lowercased().contains("post") || eventName.lowercased().contains("after") { outcome = "已完成" }
         else { outcome = "执行中" }
+        let explicitCallID = text("tool_use_id", "tool_call_id", "call_id", "toolCallID", "callID", "id")
+        if !explicitCallID.isEmpty { callID = explicitCallID }
+        else if !executionID.isEmpty { callID = [executionID, tool, path, command].joined(separator: "|") }
+        else { callID = "" }
         duration = String(describing: object["duration"] ?? object["duration_ms"] ?? "")
     }
 }
@@ -326,84 +444,54 @@ private struct AgentHookInput {
 enum AgentHookRuntime {
     static func run(providerName: String, modeName: String = "", input: FileHandle = .standardInput, output: FileHandle = .standardOutput) -> Int32 {
         guard let provider = AgentHookProvider.allCases.first(where: { $0.argument == providerName }) else { return 0 }
+        let monitorOnly = modeName.hasPrefix("watch-")
         let data = input.readDataToEndOfFile()
         guard data.count <= 4 * 1024 * 1024,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return 0 }
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            if monitorOnly && provider == .gemini { output.write(Data("{}\n".utf8)) }
+            return 0
+        }
         let event = AgentHookInput(provider: provider, object: object)
-        guard !event.tool.isEmpty else { return 0 }
+        guard !event.tool.isEmpty else {
+            if monitorOnly && provider == .gemini { output.write(Data("{}\n".utf8)) }
+            return 0
+        }
 
+        let effectiveMode = monitorOnly ? String(modeName.dropFirst("watch-".count)) : modeName
         let eventName = event.eventName.lowercased()
-        let isPre = eventName.contains("pretooluse") || eventName == "beforetooluse" || eventName == "before_tool_use" || modeName == "pre"
-        let isFailure = modeName == "failure" || eventName.contains("failure") || event.outcome == "失败"
-        let policy = AgentHookPolicy.load()
-        let blockedReason = isPre ? denyReason(for: event, policy: policy) : nil
-        let status = blockedReason.map { _ in "已阻止" } ?? (isPre ? "执行中" : (isFailure ? "失败" : "已完成"))
+        let isPre = eventName.contains("pretooluse") || eventName == "beforetooluse" || eventName == "before_tool_use"
+            || eventName.hasPrefix("pre_") || eventName.hasSuffix(".before") || effectiveMode == "pre"
+        let isFailure = effectiveMode == "failure" || eventName.contains("failure") || event.outcome == "失败"
+        let warning = warningReason(for: event)
+        let status = isPre ? "执行中" : (isFailure ? "失败" : "已完成")
         let key = event.callID.isEmpty ? UUID().uuidString : event.callID
         let safeCommand = redact(event.command)
         let record = AgentHookRecord(
             id: "\(provider.argument):\(event.sessionID.isEmpty ? "unknown-session" : event.sessionID):\(key)",
             date: Date(), provider: provider.rawValue, sessionID: event.sessionID, callID: event.callID,
             tool: event.tool, workingDirectory: event.cwd, path: event.path, command: safeCommand,
-            outcome: status, decision: blockedReason == nil ? "允许继续" : "拒绝", reason: blockedReason ?? ""
+            outcome: status, decision: "仅记录；允许继续", reason: warning ?? ""
         )
         AgentHookHistory.upsert(record)
 
-        guard let blockedReason else {
-            // No decision means the agent's own permission flow remains authoritative.
-            return 0
-        }
-        let response: [String: Any]
-        switch provider {
-        case .claude, .codex:
-            response = ["hookSpecificOutput": [
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": blockedReason
-            ]]
-        case .cursor:
-            response = ["permission": "deny", "user_message": blockedReason, "agent_message": blockedReason]
-        }
-        guard let encoded = try? JSONSerialization.data(withJSONObject: response),
-              var line = String(data: encoded, encoding: .utf8) else { return 0 }
-        line += "\n"
-        output.write(Data(line.utf8))
+        // These integrations are intentionally advisory-only, including hooks installed by older app versions.
+        if provider == .gemini { output.write(Data("{}\n".utf8)) }
         return 0
     }
 
-    private static func denyReason(for event: AgentHookInput, policy: AgentHookPolicy) -> String? {
-        if policy.blockSensitiveWrites {
-            let name = event.tool.lowercased()
-            let isWriteTool = ["write", "edit", "delete", "create", "write_file", "writefile", "replace"].contains(where: name.contains)
-            if isWriteTool, !event.path.isEmpty, let reason = AuditPathRules.sensitiveReason(path: event.path) {
-                return "AI Lock 策略阻止对敏感路径的写入（\(reason)）：\(event.path)"
-            }
-            let mutation = [">", "tee ", "rm ", "mv ", "cp ", "chmod ", "chown ", "sed -i", "perl -i", "install ", "touch ", "truncate "]
-            if !event.command.isEmpty, mutation.contains(where: { event.command.lowercased().contains($0) }) {
-                let pattern = #""([^"]+)"|'([^']+)'|([^\s;|&]+)"#
-                let range = NSRange(event.command.startIndex..<event.command.endIndex, in: event.command)
-                let paths = (try? NSRegularExpression(pattern: pattern).matches(in: event.command, range: range))?.compactMap { match -> String? in
-                    for index in 1..<match.numberOfRanges {
-                        if let range = Range(match.range(at: index), in: event.command) {
-                            let value = String(event.command[range]).trimmingCharacters(in: CharacterSet(charactersIn: "()[]{};,"))
-                            guard !value.isEmpty, !value.hasPrefix("-") else { return nil }
-                            let expanded = (value as NSString).expandingTildeInPath
-                            if expanded.hasPrefix("/") { return URL(fileURLWithPath: expanded).standardizedFileURL.path }
-                            guard !event.cwd.isEmpty else { return nil }
-                            return URL(fileURLWithPath: expanded, relativeTo: URL(fileURLWithPath: event.cwd)).standardizedFileURL.path
-                        }
-                    }
-                    return nil
-                } ?? []
-                if let reason = paths.compactMap({ AuditPathRules.sensitiveReason(path: $0) }).first {
-                    return "AI Lock 策略阻止命令修改敏感路径（\(reason)）"
-                }
-            }
+    /// Heuristics are labels for human review only; Agent hook calls are never blocked.
+    private static func warningReason(for event: AgentHookInput) -> String? {
+        if !event.path.isEmpty, let reason = AuditPathRules.sensitiveReason(path: event.path) {
+            return "风险提示：工具目标位于敏感路径（\(reason)），请核对操作意图。"
         }
-        if policy.blockDestructiveCommands {
-            let command = event.command.lowercased()
-            if let fragment = policy.commandFragments.first(where: { !command.isEmpty && command.localizedCaseInsensitiveContains($0) }) {
-                return "AI Lock 策略阻止匹配危险命令规则“\(fragment)”"
-            }
+        let command = event.command.lowercased()
+        let riskyCommands = ["rm -rf", "git push --force", "git reset --hard", "mkfs", "curl ", "wget ", "launchctl", "sudo "]
+        if let fragment = riskyCommands.first(where: { command.contains($0) }) {
+            return "风险提示：命令包含需要核对的操作“\(fragment.trimmingCharacters(in: .whitespaces))”。"
+        }
+        let tool = event.tool.lowercased()
+        if ["delete", "remove", "write", "edit", "replace"].contains(where: tool.contains) {
+            return "操作提示：这是文件删除或写入类工具调用；记录不证明底层操作结果。"
         }
         return nil
     }
@@ -414,6 +502,8 @@ enum AgentHookRuntime {
             "(?i)(sk-[A-Za-z0-9_-]{12,})",
             "(?i)(gh[pousr]_[A-Za-z0-9_]{12,})",
             "(?i)(AKIA[0-9A-Z]{16})",
+            "(?i)(authorization\\s*[:=]\\s*(?:bearer\\s+)?)[^\\s,;]+",
+            "(?i)(bearer\\s+)[A-Za-z0-9._~+/-]{8,}",
             "(?i)(password|token|secret|api[_-]?key)\\s*[:=]\\s*[^\\s;]+"
         ]
         for pattern in patterns {

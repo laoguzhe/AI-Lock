@@ -53,7 +53,7 @@ final class AppSettings {
         var title: String { switch self { case .optionSpace: return "⌥ Space"; case .controlSpace: return "⌃ Space"; case .commandOptionSpace: return "⌘⌥ Space" } }
         init(title: String) { self = title == "⌃ Space" ? .controlSpace : title == "⌘⌥ Space" ? .commandOptionSpace : .optionSpace }
     }
-    static let moduleNames: [String: String] = ["files": "文件活动", "processes": "进程管理", "network": "网络活动", "networkDiagnostics": "网络诊断", "logs": "系统日志", "clipboard": "剪贴板历史", "settings": "监控预警", "preferences": "设置", "dockLock": "DockLock", "menuBarOrganizer": "菜单栏收纳", "search": "快速文件搜索", "cacheCleaner": "系统健康检查", "uninstaller": "应用卸载", "launchItems": "启动项检查", "launcher": "快捷操作", "screenRecorder": "录屏工具", "displayBrightness": "显示器控制"]
+    static let moduleNames: [String: String] = ["files": "安全活动", "processes": "进程管理", "network": "网络活动", "networkDiagnostics": "网络诊断", "logs": "系统日志", "clipboard": "剪贴板历史", "settings": "监控预警", "preferences": "设置", "dockLock": "DockLock", "menuBarOrganizer": "菜单栏收纳", "search": "快速文件搜索", "cacheCleaner": "系统健康检查", "uninstaller": "应用卸载", "launchItems": "启动项检查", "launcher": "快捷操作", "screenRecorder": "录屏工具", "displayBrightness": "显示器控制"]
     private let defaults: UserDefaults
     private let versionKey = "ailock.settings.schemaVersion"
     var supportsWrites: Bool { defaults.integer(forKey: versionKey) <= 2 }
@@ -85,6 +85,7 @@ final class AppSettings {
     static func stableModuleCSV(_ titles: String) -> String {
         let identifiers = titles.split(separator: ",").compactMap { title -> String? in
             if title == "应用日志" { return "logs" }
+            if title == "文件活动" { return "files" }
             if title == "DockLock 设置" { return "dockLock" }
             return moduleNames.first { $0.value == title || $0.key == title }.map(\.key)
         }

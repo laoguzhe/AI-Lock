@@ -166,7 +166,14 @@ struct CommandDoubleTapDetector {
     mutating func update(commandDown: Bool, otherKey: Bool, timestamp: TimeInterval) -> Bool {
         if otherKey { reset(); return false }
         if commandDown {
-            guard pressedAt == nil else { return false }
+            if let press = pressedAt {
+                // A missed Command-up event must not leave the detector stuck forever.
+                // A later down event after the maximum tap duration starts a fresh gesture.
+                guard timestamp - press > 0.5 else { return false }
+                pressedAt = timestamp
+                releasedAt = nil
+                return false
+            }
             pressedAt = timestamp
             return false
         }

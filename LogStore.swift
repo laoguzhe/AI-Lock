@@ -39,7 +39,7 @@ final class SystemLogStore {
                completion: @escaping (Error?) -> Void) {
         queue.async {
             do {
-                let store = try OSLogStore(scope: .currentProcessIdentifier)
+                let store = try OSLogStore(scope: .system)
                 let start = Date().addingTimeInterval(-interval)
                 let position = store.position(date: start)
                 let entries = try store.getEntries(at: position, matching: NSPredicate(format: "eventType == 1024 OR eventType == 2"))
@@ -102,7 +102,7 @@ extension SystemLogEntry {
         }
         if message.contains("拽回连续失败") { return "请将鼠标手动移到目标屏幕底边一次，再观察 Dock 是否恢复锁定。" }
         if message.contains("开机自启切换失败") { return "请在系统设置 → 通用 → 登录项中检查 AI Lock。" }
-        if needsAttention { return "请结合下面的原始记录检查问题；仅凭这条日志无法确定原因。可导出诊断报告供排查。" }
+        if needsAttention { return "请结合下面的原始记录检查问题；仅凭这条日志无法确定原因。可导出日志供排查。" }
         return "这是一条运行记录，通常无需操作。"
     }
 }
@@ -131,7 +131,7 @@ enum LogDiagnosticReport {
     }
     static func make(entries: [SystemLogEntry], scope: String) -> String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
-        let header = "AI Lock 诊断报告\n生成时间：\(Date())\n应用版本：\(version)\n系统：\(ProcessInfo.processInfo.operatingSystemVersionString)\n范围：当前进程最近 10 分钟，最多 2000 条；\(scope)\n记录数：\(entries.count)\n已自动隐藏常见凭据、网址、邮箱和用户主目录；分享前请检查内容。\n"
+        let header = "AI Lock 诊断报告\n生成时间：\(Date())\n应用版本：\(version)\n系统：\(ProcessInfo.processInfo.operatingSystemVersionString)\n范围：最近 10 分钟的应用与系统日志，最多 2000 条；\(scope)\n记录数：\(entries.count)\n已自动隐藏常见凭据、网址、邮箱和用户主目录；分享前请检查内容。\n"
         return header + entries.sorted { $0.date < $1.date }.map {
             redact("\n[\($0.formattedTime)] [\($0.level.rawValue)] \($0.process) / \($0.subsystem) / \($0.category)\n\($0.summary)\n\($0.message)\n")
         }.joined()

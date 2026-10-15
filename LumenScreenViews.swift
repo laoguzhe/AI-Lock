@@ -61,11 +61,6 @@ struct LumenScreenRecorderView: View {
         } message: {
             Text(cleanupError ?? "")
         }
-        .onAppear { model.identifySelectedDisplay() }
-        // Pages stay mounted when the sidebar switches away, so re-entering the page is a resume, not an appear.
-        .moduleActivity(module: .screenRecorder,
-                        onResume: { Task { @MainActor in model.identifySelectedDisplay() } },
-                        onSuspend: {})
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshDisplays() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in model.refreshDisplays() }
     }
