@@ -4,7 +4,7 @@
 
 # AI Lock
 
-AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，集合系统监控、网络诊断、文件与剪贴板管理、快捷启动和多显示器辅助功能。支持 macOS 14 或更高版本，仅支持 Apple Silicon（M 系列芯片，arm64）Mac。
+AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，主要是想用来监视大模型 AI 等工具，监视它们不作恶。（ES 权限没有申请下来，功能暂时不全面）同时集合系统监控、网络诊断、剪贴板管理、快捷启动、多屏协作的时候锁定 DOCK、解决 macos 任务栏图标拥挤、录屏和多显示器辅助功能。支持 macOS 14 或更高版本，仅支持 Apple Silicon（M 系列芯片，arm64）Mac。
 
 本地文件、应用设置和剪贴板记录均保存在本机。应用启动时会尝试从 GitHub 更新公开测速节点目录；其他网络诊断和在线查询会按需连接相应外部服务。
 
@@ -15,7 +15,6 @@ AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，集合系统监控�
 
 AI Lock 免费使用，不含订阅或应用内购买。下载 DMG 后打开，将 `AI Lock.app` 拖到“应用程序”文件夹，再从 Launchpad 或 Finder 启动。首次使用屏幕录制、文件搜索或 DockLock 时，macOS 可能会提示授予相应权限。
 
-> 仓库必须为 Public，下载链接和应用内自动更新才能免登录访问。
 
 ## 功能详解
 
