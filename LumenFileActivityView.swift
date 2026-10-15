@@ -202,7 +202,7 @@ struct LumenFileActivityView: View {
                                             .lineLimit(2).textSelection(.enabled)
                                     }
                                     if !event.workingDirectory.isEmpty {
-                                        Text("工作目录：\(event.workingDirectory)").font(Lumen.Typo.mono(9)).foregroundStyle(Lumen.Palette.textFaint)
+                                        Text(L10n.format("工作目录：%{0}", arguments: [event.workingDirectory])).font(Lumen.Typo.mono(9)).foregroundStyle(Lumen.Palette.textFaint)
                                             .lineLimit(1).textSelection(.enabled)
                                     }
                                 }

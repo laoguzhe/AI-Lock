@@ -65,6 +65,7 @@ final class AppSettings {
             if let legacy = defaults.dictionary(forKey: "overview.hotkeys") as? [String: Int] {
                 var migrated: [String: Int] = [:]
                 for (id, name) in Self.moduleNames { if let value = legacy[name] { migrated[id] = value } }
+                if migrated["files"] == nil { migrated["files"] = legacy["文件活动"] }
                 if migrated["logs"] == nil { migrated["logs"] = legacy["应用日志"] }
                 defaults.set(migrated, forKey: "overview.hotkeys.v1")
             }

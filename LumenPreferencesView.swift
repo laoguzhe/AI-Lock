@@ -459,6 +459,12 @@ struct LumenPreferencesView: View {
                 }
             }
 
+            Button(L10n.text("检查更新")) {
+                UpdateService.shared.checkForUpdate(showUpToDate: true)
+            }
+            .lumenButton(.secondary, icon: "arrow.clockwise")
+            .padding(.top, Lumen.Metrics.s3)
+
             LumenPanel("数据位置", code: "STORAGE") {
                 VStack(alignment: .leading, spacing: 3) {
                     DetailPair(key: "应用日志", value: "~/Library/Logs/AILock.log", mono: true)

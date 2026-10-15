@@ -285,7 +285,7 @@ struct LumenOverviewView: View {
                 ModuleTile(
                     module: module,
                     editing: editing,
-                    badge: module == .files ? L10n.text("待上线") : badgeCenter.badges[module.rawValue],
+                    badge: module == .files ? nil : badgeCenter.badges[module.rawValue],
                     dot: moduleDot(module),
                     action: { handleTap(module) },
                     onHide: { hideModule(module) }
