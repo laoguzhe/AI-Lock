@@ -4,9 +4,11 @@
 
 # AI Lock
 
-AI Lock is a free, native Swift/AppKit utility for macOS. It brings together system monitoring, network diagnostics, file and clipboard tools, quick launch, and multi-display utilities. It requires macOS 14 or later. Only Apple Silicon Macs (M-series chips, arm64) are supported.
+AI Lock is a free, native Swift/AppKit utility for macOS. It is primarily designed to monitor AI tools and ensure they don't misbehave. (Endpoint Security permissions were not granted, so functionality is temporarily limited.) It also integrates system monitoring, network diagnostics, clipboard management, quick launch, Dock locking during multi-display collaboration, menu bar icon crowding solutions, screen recording, and multi-display assistance features. It requires macOS 14 or later. Only Apple Silicon Macs (M-series chips, arm64) are supported.
 
 Local files, app settings, and clipboard history stay on your Mac. At launch, the app attempts to refresh the public speed-test node catalog from GitHub; other diagnostics and online lookups connect to external services when used.
+
+# If you're interested in cross-model permanent memory, check out my other project [DAOSHI](https://daoshi.me)
 
 ## Download and install
 

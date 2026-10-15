@@ -8,6 +8,8 @@ AI Lock 是一个免费的原生 Swift/AppKit macOS 工具，主要是想用来�
 
 本地文件、应用设置和剪贴板记录均保存在本机。应用启动时会尝试从 GitHub 更新公开测速节点目录；其他网络诊断和在线查询会按需连接相应外部服务。
 
+# 有兴趣做跨模型永久记忆的可以一起研究我的另一个项目 [DAOSHI](https://daoshi.me)
+
 ## 下载与安装
 
 - [从 GitHub Releases 下载最新版 DMG](https://github.com/laoguzhe/AI-Lock/releases/latest)
