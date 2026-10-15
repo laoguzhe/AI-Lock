@@ -141,26 +141,21 @@ defaults write com.laogu.ailock targetDisplay -string builtin # builtin | main |
 
 ## 构建与生成 DMG
 
-需要安装 Xcode Command Line Tools。开发构建和本机 DMG：
+需要安装 Xcode Command Line Tools。构建开发版应用：
 
 ```bash
 ./build.sh
-./package-dmg.sh
 ```
 
-`package-dmg.sh` 会在 `build/package/` 中构建应用并生成 `AILock-<VERSION>-local.dmg`。此本地包不经过 Apple 公证，适合开发和内部试用，不要作为公开下载版。
-
-准备可直接供外部用户下载的签名与公证版：
+需要 Developer ID Application 证书和 `notarytool` 公证配置时，可用 `release.sh` 生成已签名、公证并通过 Gatekeeper 验收的 DMG：
 
 ```bash
-./package-dmg.sh --release
+VERSION="$(cat VERSION)" BUILD_NUM="$(cat BUILD_NUM)" ./release.sh
 ```
 
-该命令调用 `release.sh`，需要 Developer ID Application 证书和 `notarytool` 公证配置；会按 [`VERSION`](VERSION) 和 [`BUILD_NUM`](BUILD_NUM) 生成 DMG。应用包内的 `Contents/Resources/LICENSE.txt` 会附上本项目许可证和来源署名。
+该脚本只生成本地 DMG，不创建 GitHub Release。公开版本发布会先提交并推送源码，再构建、公证并上传 DMG、SHA-256 校验和及 `AILock-update.json` 更新清单。仓库必须为公开仓库，应用才能免登录检查和下载更新。应用启动时检查更新清单；发现新版后提示用户，确认后校验下载文件、安装并重新启动。
 
-发布 DMG 需要 Developer ID 签名、公证凭据和已配置的 GitHub CLI。GitHub Release 附件使用固定名称 `AILock.dmg`；仓库必须为公开仓库，应用才能免登录检查更新并下载新版。
-
-完整发布到 GitHub 可运行 `./fabu.sh`：它自动递增 `VERSION` 和 `BUILD_NUM`，构建、签名、公证并验收应用及 DMG，然后执行 `git add -A`、创建发布提交、推送当前默认分支，并创建 GitHub Release 上传 `AILock.dmg`、SHA-256 校验和与 `AILock-update.json` 更新清单。应用启动时会检查清单；发现新版后提示用户，确认后会校验下载文件、替换应用并重新启动。脚本要求仓库为 Public、GitHub CLI 已登录、公证凭据可用且发布标签不存在；运行前请确认仓库内所有已修改和未跟踪文件都应包含在本次发布中。
+仓库不包含自动发布脚本；发布凭据和发布流程由维护者在本地管理。
 
 其他开发检查命令见 [`tests/`](tests/)。真实 Endpoint Security 授权和系统扩展运行仍需已批准的 entitlement 与签名设备验收；本地原型构建不能代替该验收。
 

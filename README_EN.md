@@ -142,26 +142,21 @@ Settings normally reload within a few seconds. The app log is at `~/Library/Logs
 
 ## Build and create a DMG
 
-Install Xcode Command Line Tools. For a development build and local DMG:
+Install Xcode Command Line Tools. Build the development app with:
 
 ```bash
 ./build.sh
-./package-dmg.sh
 ```
 
-`package-dmg.sh` builds the app in `build/package/` and creates `AILock-<VERSION>-local.dmg`. This local package is not notarized and is intended for development or internal use, not public downloads.
-
-To create a signed and notarized release build:
+With a Developer ID Application certificate and configured `notarytool` profile, `release.sh` creates a signed, notarized DMG that passes Gatekeeper validation:
 
 ```bash
-./package-dmg.sh --release
+VERSION="$(cat VERSION)" BUILD_NUM="$(cat BUILD_NUM)" ./release.sh
 ```
 
-This invokes `release.sh`, which requires a Developer ID Application certificate and a configured `notarytool` profile. The DMG version comes from [`VERSION`](VERSION) and [`BUILD_NUM`](BUILD_NUM). The app bundle includes the project license and source attribution at `Contents/Resources/LICENSE.txt`.
+This script creates a local DMG and does not create a GitHub Release. Public releases commit and push the source before building, notarizing, and uploading the DMG, SHA-256 checksum, and `AILock-update.json` manifest. The repository must be public so the app can check for and download updates without GitHub credentials. At launch, the app checks the update manifest; when a newer version is available, it prompts the user, verifies the downloaded file, installs the update, and relaunches.
 
-Publishing a DMG requires Developer ID signing, notarization credentials, and GitHub CLI authentication. The GitHub Release asset uses the stable name `AILock.dmg`; the repository must be Public so installed apps can check for and download updates without GitHub credentials.
-
-To publish a complete GitHub Release, run `./fabu.sh`. It increments `VERSION` and `BUILD_NUM`, builds, signs, notarizes, and validates the app and DMG, then runs `git add -A`, creates a release commit, pushes the current default branch, and creates a GitHub Release with `AILock.dmg`, its SHA-256 checksum, and the `AILock-update.json` manifest. At launch, the app checks the manifest, offers newer versions, verifies the downloaded disk image, installs the update, and relaunches. The script requires a Public repository, an authenticated GitHub CLI, usable notarization credentials, and a tag that does not already exist. Before running it, confirm that every modified and untracked repository file should be included in the release.
+The repository does not include the automated publishing script; maintainers manage release credentials and publishing locally.
 
 Other development checks are listed in [`tests/`](tests/). Real Endpoint Security authorization and system extension operation still require an approved entitlement and validation on an authorized Mac. A local prototype build does not replace that validation.
 
