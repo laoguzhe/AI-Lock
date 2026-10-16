@@ -160,6 +160,8 @@ enum CommandRunner {
 
 /// Two short, standalone Command presses; shortcuts and other modifiers cancel the gesture.
 struct CommandDoubleTapDetector {
+    private let maximumPressDuration: TimeInterval = 0.65
+    private let maximumInterTapInterval: TimeInterval = 0.8
     private var pressedAt: TimeInterval?
     private var releasedAt: TimeInterval?
     mutating func reset() { pressedAt = nil; releasedAt = nil }
@@ -169,7 +171,7 @@ struct CommandDoubleTapDetector {
             if let press = pressedAt {
                 // A missed Command-up event must not leave the detector stuck forever.
                 // A later down event after the maximum tap duration starts a fresh gesture.
-                guard timestamp - press > 0.5 else { return false }
+                guard timestamp - press > maximumPressDuration else { return false }
                 pressedAt = timestamp
                 releasedAt = nil
                 return false
@@ -179,8 +181,8 @@ struct CommandDoubleTapDetector {
         }
         guard let press = pressedAt else { return false }
         pressedAt = nil
-        guard timestamp - press <= 0.5 else { releasedAt = nil; return false }
-        if let release = releasedAt, press - release <= 0.45 {
+        guard timestamp - press <= maximumPressDuration else { releasedAt = nil; return false }
+        if let release = releasedAt, press - release <= maximumInterTapInterval {
             releasedAt = nil
             return true
         }

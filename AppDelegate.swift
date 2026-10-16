@@ -110,11 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSPopo
         var active = statusAlerts.evaluate(sample)
         if Date() < alertPreviewUntil { active.formUnion(ResourceAlerts.Metric.allCases.filter { $0 != .swap }) }
         let networkSelected = selected.contains("network") || selected.contains("networkUpload") || selected.contains("networkDownload")
-        let selectableMetrics: Set<ResourceAlerts.Metric> = [.cpu, .memory, .disk, .network]
         let visibleMetrics = ResourceAlerts.Metric.allCases.filter {
             $0 != .swap && (selected.contains($0.rawValue)
                 || ($0 == .network && networkSelected)
-                || (!selectableMetrics.contains($0) && active.contains($0)))
+                || active.contains($0))
         }
         let visibleAlerts = active.intersection(Set(visibleMetrics))
         if visibleAlerts.isEmpty {
